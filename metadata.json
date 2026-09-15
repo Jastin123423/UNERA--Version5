@@ -1,6 +1,6 @@
 {
-  "name": "Unera6 - version5",
-  "description": "Imported from GitHub: Jastin123423/unera6",
+  "name": "Feathered",
+  "description": "Feathered Social Network - Connect, Create, Move.",
   "requestFramePermissions": [
     "camera",
     "microphone",

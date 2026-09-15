@@ -82,11 +82,11 @@ const HELP_ARTICLES: Article[] = [
     },
     {
         id: 'music',
-        title: 'UNERA Music & Podcasts',
+        title: 'F-Music & Podcasts',
         category: 'Music',
         content: (
             <div className="space-y-6">
-                <p className="text-[16px] text-[#B0B3B8]">UNERA Music is a platform for artists and listeners alike. Enjoy high-quality streaming directly in your feed.</p>
+                <p className="text-[16px] text-[#B0B3B8]">F-Music is a platform for artists and listeners alike. Enjoy high-quality streaming directly in your feed.</p>
                 
                 <div className="bg-gradient-to-br from-[#1877F2] to-[#00A400] p-6 rounded-xl relative overflow-hidden">
                     <div className="relative z-10">
@@ -152,7 +152,7 @@ const CATEGORIES = [
     { id: 'Account', icon: 'fas fa-user-circle', label: 'Account Settings', desc: 'Login, Password, Security' },
     { id: 'Profile', icon: 'fas fa-id-card', label: 'Profile & Content', desc: 'Photos, Bio, Posts' },
     { id: 'Groups', icon: 'fas fa-users', label: 'Groups', desc: 'Join, Create, Manage' },
-    { id: 'Music', icon: 'fas fa-music', label: 'UNERA Music', desc: 'Streaming, Uploading' },
+    { id: 'Music', icon: 'fas fa-music', label: 'F-Music', desc: 'Streaming, Uploading' },
     { id: 'Marketplace', icon: 'fas fa-store', label: 'Marketplace', desc: 'Buying, Selling' },
     { id: 'Privacy', icon: 'fas fa-shield-alt', label: 'Privacy & Safety', desc: 'Blocking, Reporting' },
 ];

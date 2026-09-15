@@ -3274,7 +3274,7 @@ export const CreateStoryModal: React.FC<CreateStoryModalProps> = ({
 
         <div className="h-px bg-[#1E293B] my-2"></div>
         <p className="text-[#B0B3B8] text-xs font-bold uppercase tracking-widest px-1">
-          UNERA Music Trends
+          F-Music Trends
         </p>
 
         <div className="flex flex-col gap-2">

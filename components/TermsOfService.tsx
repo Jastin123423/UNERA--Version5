@@ -183,7 +183,7 @@ export const TermsOfServicePage: React.FC = () => {
               <div className="bg-[#0F172A] p-4 rounded-lg border border-[#1E293B]">
                 <h4 className="font-bold text-[#F8FAFC] mb-2 flex items-center gap-2">
                   <i className="fas fa-music text-[#0055FF]"></i>
-                  UNERA Music
+                  F-Music
                 </h4>
                 <p className="text-sm text-[#94A3B8]">Users uploading music content must own or have proper licenses for all material. Unauthorized distribution of copyrighted music is prohibited and may result in account termination.</p>
               </div>

@@ -4,6 +4,7 @@ import { User, Notification } from '../types';
 import { NotificationDropdown } from './Notifications';
 import { useNavigate } from 'react-router-dom';
 import { VerifiedBadge } from './VerifiedBadge';
+import { FeatheredLogo } from './FeatheredLogo';
 
 /* ============================================================
    GLOBAL ONLINE PRESENCE
@@ -47,8 +48,8 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
     { id: 'events', title: 'Events', icon: 'fas fa-calendar-alt', color: '#2563EB' },
     { id: 'profiles', title: 'Profiles', icon: 'fas fa-user-friends', color: '#1877F2' },
     { id: 'groups', title: 'Groups', icon: 'fas fa-users', color: '#38BDF8' },
-    { id: 'music', title: 'UNERA Music', icon: 'fas fa-music', color: '#1877F2' },
-    { id: 'tools', title: 'UNERA Tools', icon: 'fas fa-briefcase', color: '#2DD4BF' },
+    { id: 'music', title: 'F-Music', icon: 'fas fa-music', color: '#1877F2' },
+    { id: 'tools', title: 'Feathered Tools', icon: 'fas fa-briefcase', color: '#2DD4BF' },
     { id: 'reels', title: 'Videos', icon: 'fas fa-play-circle', color: '#1877F2' },
     { id: 'birthdays', title: 'Birthdays', icon: 'fas fa-birthday-cake', color: '#FBBF24' },
     { id: 'memories', title: 'Memories', icon: 'fas fa-history', color: '#818CF8' },
@@ -584,7 +585,7 @@ export const Header: React.FC<HeaderProps> = ({
       { id: 'marketplace', title: 'Marketplace', icon: 'fas fa-store', color: '#10B981', desc: 'Browse and sell items', action: () => onMarketplaceClick() },
       { id: 'groups', title: 'Groups', icon: 'fas fa-users', color: '#1877F2', desc: 'Discover and join communities', action: () => onGroupsClick() },
       { id: 'reels', title: 'Videos', icon: 'fas fa-play-circle', color: '#1877F2', desc: 'Watch trending videos & reels', action: () => onReelsClick() },
-      { id: 'music', title: 'UNERA Music', icon: 'fas fa-music', color: '#1877F2', desc: 'Listen to songs and audio tracks', action: () => onNavigate('music') },
+      { id: 'music', title: 'F-Music', icon: 'fas fa-music', color: '#1877F2', desc: 'Listen to songs and audio tracks', action: () => onNavigate('music') },
       { id: 'ads', title: 'Ad Dashboard', icon: 'fas fa-chart-line', color: '#06B6D4', desc: 'Create and track ads', action: () => onAdsClick() },
       { id: 'events', title: 'Events', icon: 'fas fa-calendar-alt', color: '#EC4899', desc: 'Find local events and gatherings', action: () => onNavigate('events') },
     ];
@@ -634,7 +635,7 @@ export const Header: React.FC<HeaderProps> = ({
       {/* TOP HEADER - CLEAN DARK NAVY BAR WITH EDGE-TO-EDGE STATUS BAR INTEGRATION */}
       <header className="sticky top-0 z-50 bg-[#0B1120] border-b border-[#1E293B] pt-[env(safe-area-inset-top,0px)]">
         <div className="h-14 px-3 sm:px-4 flex items-center justify-between gap-2 max-w-7xl mx-auto">
-          {/* LEFT: Back (if non-home), UNERA Icon and Name separated extending to the far left */}
+          {/* LEFT: Back (if non-home), Feathered Logo and Name on the left */}
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             {showBackButton && (
               <button
@@ -646,25 +647,20 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             )}
 
-            {/* UNERA Icon - Separated on the left */}
+            {/* Feathered Brand Button (Icon + Name) */}
             <button
               type="button"
               onClick={onHomeClick}
-              className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-[#166FE5] to-[#1877F2] flex items-center justify-center shadow-[0_2px_10px_rgba(24,119,242,0.35)] hover:scale-105 active:scale-95 transition-all flex-shrink-0 focus:outline-none cursor-pointer"
-              aria-label="UNERA Home"
-              title="UNERA"
+              className="flex items-center gap-2.5 focus:outline-none select-none cursor-pointer group"
+              aria-label="Feathered Home"
+              title="Feathered"
             >
-              <i className="fas fa-globe-africa text-white text-[16px]"></i>
-            </button>
-
-            {/* UNERA Name - Separated on the left */}
-            <button
-              type="button"
-              onClick={onHomeClick}
-              className="text-[20px] sm:text-[23px] font-black tracking-wider text-white hover:text-[#1877F2] transition-colors focus:outline-none select-none cursor-pointer"
-              aria-label="UNERA"
-            >
-              UNERA
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[#0B0E14] border border-[#1E293B] group-hover:border-[#2563EB]/60 flex items-center justify-center shadow-[0_2px_12px_rgba(37,99,235,0.25)] group-hover:shadow-[0_4px_16px_rgba(37,99,235,0.45)] group-hover:scale-105 active:scale-95 transition-all flex-shrink-0 p-1.5">
+                <FeatheredLogo className="w-full h-full text-[#2563EB] group-hover:text-[#38BDF8] transition-colors" />
+              </div>
+              <span className="text-[20px] sm:text-[22px] font-black tracking-tight text-white group-hover:text-[#38BDF8] transition-colors select-none font-sans">
+                Feathered
+              </span>
             </button>
           </div>
 
@@ -1161,7 +1157,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       <div className="border-t border-[#1E293B] my-4 mx-2"></div>
       <div className="px-4 text-[#64748B] text-[12px] leading-tight">
-        <p>UNERA © 2025</p>
+        <p>Feathered © 2025</p>
       </div>
     </div>
   );

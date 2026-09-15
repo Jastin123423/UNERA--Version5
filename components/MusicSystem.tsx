@@ -2428,7 +2428,7 @@ const AudioUploadModal: React.FC<AudioUploadModalProps> = ({
           <div className="flex justify-between items-center mb-6">
             <div>
               <h2 className="text-[#FFF] text-2xl font-bold">Professional Upload</h2>
-              <p className="text-[#888] text-sm">Distribute your content to UNERA Music</p>
+              <p className="text-[#888] text-sm">Distribute your content to F-Music</p>
             </div>
             <i className="fas fa-times text-[#888] cursor-pointer text-xl hover:text-white transition-colors" onClick={onClose}></i>
           </div>
@@ -3206,7 +3206,7 @@ const MusicSystem: React.FC<MusicSystemProps> = ({
             <div className="rounded-[28px] bg-[#0F172A] border border-[#1E293B] p-4 sm:p-5 shadow-sm">
               <div className="flex items-center justify-between gap-3 mb-4">
                 <div>
-                  <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">UNERA Music</h1>
+                  <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">F-Music</h1>
                   <p className="text-[#94A3B8] mt-1 text-sm sm:text-base">Discover trending sounds, creators and fresh vibes</p>
                 </div>
                 {currentUser && (
@@ -3560,7 +3560,7 @@ const MusicSystem: React.FC<MusicSystemProps> = ({
               </button>
               <div>
                 <h1 className="text-3xl font-extrabold text-white">Creator Upload Studio</h1>
-                <p className="text-[#A8AFBC] text-sm mt-1">Upload singles or albums to UNERA Music.</p>
+                <p className="text-[#A8AFBC] text-sm mt-1">Upload singles or albums to F-Music.</p>
               </div>
             </div>
             <AudioUploadModal

@@ -6864,7 +6864,7 @@ const createReel = useCallback(async (
       setPostUploadState((prev) => prev ? ({
         ...prev,
         progress: 55,
-        secondaryStatus: 'Registering event with UNERA...',
+        secondaryStatus: 'Registering event with Feathered...',
       }) : null);
 
       const res = await apiFetch('/api/events', { method: 'POST', body: JSON.stringify(payload) });

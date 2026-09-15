@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.unera.social',
-  appName: 'UNERA',
+  appName: 'Feathered',
   webDir: 'dist',
   android: {
     allowMixedContent: true,
@@ -13,6 +13,8 @@ const config: CapacitorConfig = {
     androidScheme: 'https',
     cleartext: true,
     allowNavigation: [
+      'feathered.social',
+      '*.feathered.social',
       'unera.social',
       '*.unera.social',
       'media.unera.social',
