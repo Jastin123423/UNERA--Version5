@@ -32,6 +32,9 @@ jobs:
     permissions:
       contents: read
 
+    env:
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: 'true'
+
     steps:
       - name: 1. Checkout Repository
         uses: actions/checkout@v4
@@ -61,8 +64,27 @@ jobs:
           java-version: 21
           cache: 'gradle'
 
-      - name: 7. Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: 7. Setup Android SDK & Accept Licenses
+        run: |
+          ANDROID_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_HOME=$ANDROID_ROOT" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_ROOT" >> $GITHUB_ENV
+          echo "$ANDROID_ROOT/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$ANDROID_ROOT/platform-tools" >> $GITHUB_PATH
+
+          # Create licenses directory and pre-accept known Android SDK licenses
+          mkdir -p "$ANDROID_ROOT/licenses"
+          echo -e "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\nd56f5187479451eabf01fb78af6dfcb131a6481e\n89377762e00b38b50773dd90ee64c199049482e6" > "$ANDROID_ROOT/licenses/android-sdk-license"
+          echo -e "\n84831b9409646a918e30573bab4c9c91346d8abd" > "$ANDROID_ROOT/licenses/android-sdk-preview-license"
+          echo -e "\n799f61101c38e057d973049a314e789e316f4480" > "$ANDROID_ROOT/licenses/android-sdk-arm-dbt-license"
+          echo -e "\ne9acab5b5fbb560a72cfa4e6ce7b19f26344b10c" > "$ANDROID_ROOT/licenses/mips-android-sysimage-license"
+          echo -e "\nbb33080f25bde990547a163e456411790047e359" > "$ANDROID_ROOT/licenses/google-gdk-license"
+          echo -e "\n601085b94cd77f0b54ff86406955dce82e3770bc" > "$ANDROID_ROOT/licenses/android-googletv-license"
+
+          # Use pre-installed sdkmanager with yes to accept any extra licenses
+          if [ -x "$ANDROID_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$ANDROID_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          fi
 
       - name: 8. Make Gradlew Executable
         run: chmod +x ./android/gradlew
