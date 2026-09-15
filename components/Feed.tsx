@@ -38,6 +38,7 @@ import {
 } from '../utils/dataCache';
 import { InstagramVideoCard } from './InstagramVideoCard';
 import { SavePostButton } from './SavePostButton';
+import { imageCache, observeForThumbnail, observeForFeed } from '../utils/imageCache';
 //====================TYPE DEFINITION =============
 export type FeedItem =
   | { kind: 'post'; data: any; created_at?: string }
@@ -3615,93 +3616,155 @@ const getStoryMediaList = (story: any) => {
 };    
 
     
-// ==================== PROGRESSIVE TILE IMAGE (MOVED OUTSIDE MEDIA GRID) ====================
+// ==================== PROGRESSIVE TILE IMAGE (PROFESSIONAL UNERA DATA SAVING) ====================
+// - Outside 3 posts: 0kb downloaded, stable background placeholder (no layout shift/shake)
+// - ~3 posts before screen: thumbnail downloaded
+// - ~1 post before screen: full feed image downloaded & smoothly applied
+// - Cached images: instant load, never redownload once downloaded
 const ProgressiveTileImage = memo(
   ({
     item,
     className,
   }: {
-    item: { url: string; thumb?: string; feed?: string; full?: string };
+    item: { url: string; thumb?: string; feed?: string; full?: string; width?: number; height?: number };
     className: string;
   }) => {
     const thumbSrc = item.thumb || '';
-    const feedSrc = item.feed || '';
-    const fullSrc = item.full || '';
+    const feedSrc = item.feed || item.full || item.url || '';
+    const fullSrc = item.full || item.feed || item.url || '';
     const fallbackSrc = item.url || '';
 
-    const stableKey = `${thumbSrc}|${feedSrc}|${fullSrc}`;
-    const [src, setSrc] = useState(thumbSrc || feedSrc || fullSrc || fallbackSrc || '');
-    const upgradedRef = useRef(false);
-    const lastStableKeyRef = useRef(stableKey);
+    // Check if feed image or thumbnail is already in local/memory cache
+    const feedCached = imageCache.isCached(feedSrc) || imageCache.isCached(fullSrc) || imageCache.isCached(fallbackSrc);
+    const thumbCached = imageCache.isCached(thumbSrc);
+
+    const [stage, setStage] = useState<'idle' | 'thumb' | 'feed'>(() => {
+      if (feedCached) return 'feed';
+      if (thumbCached) return 'thumb';
+      return 'idle';
+    });
+
+    const [activeSrc, setActiveSrc] = useState<string>(() => {
+      if (feedCached) return feedSrc || fullSrc || fallbackSrc;
+      if (thumbCached) return thumbSrc;
+      return '';
+    });
+
+    const [isLoaded, setIsLoaded] = useState<boolean>(() => feedCached);
+    const containerRef = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
-      if (lastStableKeyRef.current === stableKey) return;
-      lastStableKeyRef.current = stableKey;
-      upgradedRef.current = false;
-      setSrc(thumbSrc || feedSrc || fullSrc || fallbackSrc || '');
-    }, [stableKey, thumbSrc, feedSrc, fullSrc, fallbackSrc]);
+      // If already feed loaded and active, nothing to do
+      if (stage === 'feed' && isLoaded && activeSrc) return;
 
-    useEffect(() => {
-      if (!feedSrc) return;
-      if (upgradedRef.current) return;
-      if (src === feedSrc) {
-        upgradedRef.current = true;
+      if (imageCache.isCached(feedSrc) || imageCache.isCached(fullSrc)) {
+        const resolved = feedSrc || fullSrc || fallbackSrc;
+        setStage('feed');
+        setActiveSrc(resolved);
+        setIsLoaded(true);
         return;
       }
 
-      let cancelled = false;
-      const img = new Image();
-      img.src = feedSrc;
+      const el = containerRef.current;
+      if (!el) return;
 
-      img.onload = () => {
-        if (cancelled) return;
-        upgradedRef.current = true;
-        setSrc(feedSrc);
-      };
+      // STAGE 2 OBSERVER (~1 post ahead / on screen -> Download feed image)
+      const unobserveFeed = observeForFeed(el, () => {
+        setStage('feed');
+        const targetFeed = feedSrc || fullSrc || fallbackSrc;
+        if (targetFeed) {
+          const img = new Image();
+          img.src = targetFeed;
+          img.onload = () => {
+            imageCache.markCached(targetFeed);
+            setActiveSrc(targetFeed);
+            setIsLoaded(true);
+          };
+          img.onerror = () => {
+            setActiveSrc(targetFeed);
+            setIsLoaded(true);
+          };
+        }
+      });
 
-      img.onerror = () => {};
+      // If already in thumb or feed stage, we only wait for feed observer
+      if (stage !== 'idle') {
+        return () => {
+          unobserveFeed();
+        };
+      }
+
+      // STAGE 1 OBSERVER (~3 posts ahead -> Download thumbnail)
+      const unobserveThumb = observeForThumbnail(el, () => {
+        setStage((prev) => (prev === 'idle' ? 'thumb' : prev));
+        const targetThumb = thumbSrc || feedSrc || fallbackSrc;
+        if (targetThumb) {
+          const img = new Image();
+          img.src = targetThumb;
+          img.onload = () => {
+            imageCache.markCached(targetThumb);
+            setActiveSrc((current) => current || targetThumb);
+          };
+          img.onerror = () => {
+            setActiveSrc((current) => current || targetThumb);
+          };
+        }
+      });
 
       return () => {
-        cancelled = true;
-        img.onload = null;
-        img.onerror = null;
+        unobserveThumb();
+        unobserveFeed();
       };
-    }, [feedSrc, src]);
+    }, [feedSrc, fullSrc, thumbSrc, fallbackSrc, stage, activeSrc, isLoaded]);
 
     return (
-      <img
-        src={src}
-        alt=""
-        loading="lazy"
-        decoding="async"
-        className={className}
-        onError={(e) => {
-          const el = e.currentTarget as HTMLImageElement;
-          const current = el.getAttribute('src') || '';
+      <div
+        ref={containerRef}
+        className="w-full h-full relative overflow-hidden bg-[#162032]"
+      >
+        {/* Subtle placeholder icon while 0kb idle */}
+        {(!activeSrc || !isLoaded) && (
+          <div className="absolute inset-0 bg-[#162032] flex items-center justify-center pointer-events-none">
+            <div className="w-8 h-8 rounded-full bg-[#1E293B]/50 flex items-center justify-center">
+              <i className="fas fa-image text-[#334155] text-xs" />
+            </div>
+          </div>
+        )}
 
-          if (current === thumbSrc && feedSrc && feedSrc !== thumbSrc) {
-            el.src = feedSrc;
-            return;
-          }
-
-          if (current === feedSrc && fullSrc && fullSrc !== feedSrc) {
-            el.src = fullSrc;
-            return;
-          }
-
-          if (fallbackSrc && current !== fallbackSrc) {
-            el.src = fallbackSrc;
-            return;
-          }
-
-          el.style.display = 'none';
-        }}
-      />
+        {/* The Image element: 0kb download when idle, thumbnail at 3 posts, feed at 1 post */}
+        {activeSrc && (
+          <img
+            src={activeSrc}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            className={`${className} transition-opacity duration-300 ease-out ${
+              isLoaded ? 'opacity-100' : 'opacity-75'
+            }`}
+            onLoad={() => {
+              imageCache.markCached(activeSrc);
+              setIsLoaded(true);
+            }}
+            onError={(e) => {
+              const target = e.currentTarget as HTMLImageElement;
+              if (stage === 'thumb' && feedSrc && target.src !== feedSrc) {
+                target.src = feedSrc;
+                return;
+              }
+              if (fallbackSrc && target.src !== fallbackSrc) {
+                target.src = fallbackSrc;
+                return;
+              }
+              target.style.opacity = '0';
+            }}
+          />
+        )}
+      </div>
     );
   }
 );
     
-// ==================== MEDIA GRID (keep old sizes, add thumb->feed progressive loading) ====================
+// ==================== MEDIA GRID ====================
 const MediaGrid = memo(
   ({
     media,
@@ -3718,70 +3781,13 @@ const MediaGrid = memo(
     onOpen: (url: string, index: number) => void;
   }) => {
     const total = Array.isArray(media) ? media.length : 0;
-    const [measuredMedia, setMeasuredMedia] = useState(media);
-
-    useEffect(() => {
-      let cancelled = false;
-
-      const run = async () => {
-        const next = await Promise.all(
-          media.map(
-            (item) =>
-              new Promise<{
-                url: string;
-                thumb?: string;
-                feed?: string;
-                full?: string;
-                width?: number;
-                height?: number;
-              }>((resolve) => {
-                if (item.width && item.height) {
-                  resolve(item);
-                  return;
-                }
-
-                const probeSrc = item.feed || item.thumb || item.url;
-                if (!probeSrc) {
-                  resolve(item);
-                  return;
-                }
-
-                const img = new Image();
-                img.onload = () => {
-                  resolve({
-                    ...item,
-                    width: img.naturalWidth,
-                    height: img.naturalHeight,
-                  });
-                };
-                img.onerror = () => resolve(item);
-                img.src = probeSrc;
-              })
-          )
-        );
-
-        if (!cancelled) {
-          setMeasuredMedia(next);
-        }
-      };
-
-      run();
-
-      return () => {
-        cancelled = true;
-      };
-    }, [media]);
-
-    useEffect(() => {
-      setMeasuredMedia(media);
-    }, [media]);
 
     const visible =
       total <= 4
-        ? measuredMedia
+        ? media
         : total === 5
-        ? measuredMedia.slice(0, 5)
-        : measuredMedia.slice(0, 6);
+        ? media.slice(0, 5)
+        : media.slice(0, 6);
 
     const extra = total <= 5 ? 0 : total === 6 ? 0 : total - 6;
 
@@ -3805,7 +3811,7 @@ const MediaGrid = memo(
           e.stopPropagation();
           onOpen(item.full || item.feed || item.thumb || item.url, index);
         }}
-        className={`relative overflow-hidden ${className}`}
+        className={`relative overflow-hidden bg-[#162032] ${className}`}
         style={{ borderRadius: 0 }}
       >
         <ProgressiveTileImage
@@ -3814,7 +3820,7 @@ const MediaGrid = memo(
         />
 
         {showOverlay && extra > 0 && (
-          <div className="absolute inset-0 bg-black/55 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/55 flex items-center justify-center pointer-events-none">
             <span className="text-white font-bold text-[34px] leading-none">
               +{extra}
             </span>
@@ -3825,23 +3831,30 @@ const MediaGrid = memo(
 
     if (total === 0) return null;
 
-    // Single image layout - edge-to-edge with natural aspect ratio
+    // Single image layout - edge-to-edge with natural aspect ratio container to prevent layout shifts
     if (total === 1) {
+      const item = visible[0];
+      const hasDimensions = Boolean(item.width && item.height && item.width > 0 && item.height > 0);
+      const aspectStyle = hasDimensions
+        ? { aspectRatio: `${item.width} / ${item.height}` }
+        : undefined;
+
       return (
-        <div className="w-full bg-[#050B18] overflow-hidden">
+        <div className="w-full bg-[#050B18] overflow-hidden flex justify-center">
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
               onOpen(
-                visible[0].full || visible[0].feed || visible[0].thumb || visible[0].url,
+                item.full || item.feed || item.thumb || item.url,
                 0
               );
             }}
-            className="w-full block focus:outline-none"
+            className="w-full block focus:outline-none relative bg-[#162032] min-h-[260px] max-h-[850px] overflow-hidden"
+            style={aspectStyle}
           >
             <ProgressiveTileImage
-              item={visible[0]}
+              item={item}
               className="w-full h-auto max-h-[850px] object-cover mx-auto block"
             />
           </button>
@@ -4109,7 +4122,7 @@ const GroupPostHeader = memo(
 
             <div className="flex items-center gap-2 text-[15px] text-[#B0B3B8] min-w-0 mt-0.5">
               <button
-                className="font-semibold text-[15px] text-[#B0B3B8] hover:underline truncate"
+                className="font-semibold text-[17.5px] text-[#CBD5E1] hover:text-white hover:underline truncate cursor-pointer"
                 onClick={(e) => {
                   e.stopPropagation();
                   if (userId && onOpenProfile) onOpenProfile(userId);
@@ -6781,7 +6794,7 @@ export const CreatePost: React.FC<{
         className="flex-1 bg-[#1E293B]/60 hover:bg-[#1E293B] border border-[#334155]/40 rounded-full px-4 py-2 cursor-pointer flex items-center transition-all group"
         onClick={onClick}
       >
-        <span className="text-[#94A3B8] group-hover:text-[#F8FAFC] text-[15px] sm:text-[16px] truncate transition-colors">
+        <span className="text-[#94A3B8] group-hover:text-[#F8FAFC] text-[18px] truncate transition-colors">
           What's on your mind,{' '}
           {String((currentUser as any).name || '').split(' ')[0] || 'there'}?
         </span>

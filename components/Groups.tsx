@@ -17,6 +17,7 @@ import { SavePostButton } from './SavePostButton';
 import { VerifiedBadge } from './VerifiedBadge';
 import { apiFetch } from '../utils/api';
 import { getCachedComments, setCachedComments, updateCachedComment } from '../utils/dataCache';
+import { imageCache, observeForThumbnail, observeForFeed } from '../utils/imageCache';
 
 
 // ==================== NATIVE APP DETECTION ====================
@@ -233,57 +234,148 @@ const ExpandableRichText: React.FC<{
   );
 };
 
-const MediaGrid: React.FC<{ media: { url: string; kind?: string }[]; onOpen: (url: string, index: number) => void; }> = ({ media = [], onOpen }) => {
-  const total = media.length;
-  const show = total <= 4 ? media : media.slice(0, 4);
-  const extra = total - 4;
+const GroupLazyTile = ({
+  url,
+  index,
+  className,
+  showOverlay,
+  extra,
+  onOpen
+}: {
+  url: string;
+  index: number;
+  className: string;
+  showOverlay?: boolean;
+  extra?: number;
+  onOpen: (url: string, index: number) => void;
+}) => {
+  const containerRef = useRef<HTMLButtonElement | null>(null);
+  const cached = imageCache.isCached(url);
+  const [activeSrc, setActiveSrc] = useState<string>(() => (cached ? url : ''));
+  const [isLoaded, setIsLoaded] = useState<boolean>(() => cached);
 
-  const Tile = ({ url, index, className, showOverlay }: { url: string; index: number; className: string; showOverlay?: boolean }) => (
-    <button type="button" onClick={(e) => { e.stopPropagation(); onOpen(url, index); }} className={`relative overflow-hidden ${className}`} style={{ borderRadius: 0 }}>
-      <img src={url} alt="" loading="lazy" className="w-full h-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
-      {showOverlay && extra > 0 && (
-        <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+  useEffect(() => {
+    if (activeSrc && isLoaded) return;
+    if (imageCache.isCached(url)) {
+      setActiveSrc(url);
+      setIsLoaded(true);
+      return;
+    }
+
+    const el = containerRef.current;
+    if (!el) return;
+
+    // Stage 2: ~1 post away / in viewport
+    const unobserveFeed = observeForFeed(el, () => {
+      const img = new Image();
+      img.src = url;
+      img.onload = () => {
+        imageCache.markCached(url);
+        setActiveSrc(url);
+        setIsLoaded(true);
+      };
+      img.onerror = () => {
+        setActiveSrc(url);
+        setIsLoaded(true);
+      };
+    });
+
+    // Stage 1: ~3 posts away
+    const unobserveThumb = observeForThumbnail(el, () => {
+      setActiveSrc((prev) => prev || url);
+    });
+
+    return () => {
+      unobserveThumb();
+      unobserveFeed();
+    };
+  }, [url, activeSrc, isLoaded]);
+
+  return (
+    <button
+      ref={containerRef}
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onOpen(url, index); }}
+      className={`relative overflow-hidden bg-[#162032] ${className}`}
+      style={{ borderRadius: 0 }}
+    >
+      {(!activeSrc || !isLoaded) && (
+        <div className="absolute inset-0 bg-[#162032] flex items-center justify-center pointer-events-none">
+          <div className="w-8 h-8 rounded-full bg-[#1E293B]/50 flex items-center justify-center">
+            <i className="fas fa-image text-[#334155] text-xs" />
+          </div>
+        </div>
+      )}
+      {activeSrc && (
+        <img
+          src={activeSrc}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          className={`w-full h-full object-cover transition-opacity duration-300 ease-out ${
+            isLoaded ? 'opacity-100' : 'opacity-70'
+          }`}
+          onLoad={() => {
+            imageCache.markCached(url);
+            setIsLoaded(true);
+          }}
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.opacity = '0';
+          }}
+        />
+      )}
+      {showOverlay && Boolean(extra && extra > 0) && (
+        <div className="absolute inset-0 bg-black/60 flex items-center justify-center pointer-events-none">
           <span className="text-white font-black text-3xl">+{extra}</span>
         </div>
       )}
     </button>
   );
+};
+
+const MediaGrid: React.FC<{ media: { url: string; kind?: string }[]; onOpen: (url: string, index: number) => void; }> = ({ media = [], onOpen }) => {
+  const total = media.length;
+  const show = total <= 4 ? media : media.slice(0, 4);
+  const extra = total - 4;
 
   if (total === 0) return null;
   if (total === 1) {
     return (
-      <div className="w-full bg-black">
-        <button type="button" onClick={(e) => { e.stopPropagation(); onOpen(show[0].url, 0); }} className="w-full block">
-          <img src={show[0].url} alt="" loading="lazy" className="w-full h-auto max-h-[650px] object-contain" />
-        </button>
+      <div className="w-full bg-[#050B18] overflow-hidden flex justify-center">
+        <GroupLazyTile
+          url={show[0].url}
+          index={0}
+          className="w-full min-h-[260px] max-h-[650px]"
+          onOpen={onOpen}
+        />
       </div>
     );
   }
   if (total === 2) {
     return (
       <div className="w-full grid grid-cols-2 gap-[2px] bg-black">
-        <Tile url={show[0].url} index={0} className="h-[320px] w-full" />
-        <Tile url={show[1].url} index={1} className="h-[320px] w-full" />
+        <GroupLazyTile url={show[0].url} index={0} className="h-[320px] w-full" onOpen={onOpen} />
+        <GroupLazyTile url={show[1].url} index={1} className="h-[320px] w-full" onOpen={onOpen} />
       </div>
     );
   }
   if (total === 3) {
     return (
       <div className="w-full grid grid-cols-2 gap-[2px] bg-black">
-        <Tile url={show[0].url} index={0} className="h-[420px] w-full" />
+        <GroupLazyTile url={show[0].url} index={0} className="h-[420px] w-full" onOpen={onOpen} />
         <div className="grid grid-rows-2 gap-[2px] h-[420px]">
-          <Tile url={show[1].url} index={1} className="w-full h-full" />
-          <Tile url={show[2].url} index={2} className="w-full h-full" />
+          <GroupLazyTile url={show[1].url} index={1} className="w-full h-full" onOpen={onOpen} />
+          <GroupLazyTile url={show[2].url} index={2} className="w-full h-full" onOpen={onOpen} />
         </div>
       </div>
     );
   }
   return (
     <div className="w-full grid grid-cols-2 gap-[2px] bg-black">
-      <Tile url={show[0].url} index={0} className="h-[260px] w-full" />
-      <Tile url={show[1].url} index={1} className="h-[260px] w-full" />
-      <Tile url={show[2].url} index={2} className="h-[260px] w-full" />
-      <Tile url={show[3].url} index={3} className="h-[260px] w-full" showOverlay={extra > 0} />
+      <GroupLazyTile url={show[0].url} index={0} className="h-[260px] w-full" onOpen={onOpen} />
+      <GroupLazyTile url={show[1].url} index={1} className="h-[260px] w-full" onOpen={onOpen} />
+      <GroupLazyTile url={show[2].url} index={2} className="h-[260px] w-full" onOpen={onOpen} />
+      <GroupLazyTile url={show[3].url} index={3} className="h-[260px] w-full" showOverlay={extra > 0} extra={extra} onOpen={onOpen} />
     </div>
   );
 };

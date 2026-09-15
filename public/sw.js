@@ -1,10 +1,10 @@
-const SW_VERSION = 'unera-sw-v3';
+const SW_VERSION = 'unera-sw-v4';
 
 const STATIC_CACHE = `static-${SW_VERSION}`;
 const MEDIA_CACHE = `media-${SW_VERSION}`;
 const API_CACHE = `api-${SW_VERSION}`;
 
-const MAX_MEDIA_ITEMS = 200;
+const MAX_MEDIA_ITEMS = 1000;
 const MAX_API_ITEMS = 50;
 
 /* =========================
@@ -225,37 +225,33 @@ self.addEventListener('activate', (event) => {
 ========================= */
 
 function isMediaRequest(request) {
+  if (
+    request.destination === 'image' ||
+    request.destination === 'video' ||
+    request.destination === 'audio'
+  ) {
+    return true;
+  }
 
   const url = new URL(request.url);
-
-  const hostAllowed =
-    url.origin === self.location.origin ||
-    url.origin === 'https://media.unera.social';
-
-  if (!hostAllowed) return false;
-
-  const pathname =
-    url.pathname.toLowerCase();
+  const pathname = url.pathname.toLowerCase();
 
   return (
-
     pathname.endsWith('.mp4') ||
     pathname.endsWith('.webm') ||
     pathname.endsWith('.mov') ||
     pathname.endsWith('.mkv') ||
-
     pathname.endsWith('.jpg') ||
     pathname.endsWith('.jpeg') ||
     pathname.endsWith('.png') ||
     pathname.endsWith('.webp') ||
     pathname.endsWith('.gif') ||
     pathname.endsWith('.avif') ||
-
+    pathname.endsWith('.svg') ||
     pathname.endsWith('.mp3') ||
     pathname.endsWith('.wav') ||
     pathname.endsWith('.ogg') ||
     pathname.endsWith('.m4a')
-
   );
 }
 
@@ -557,11 +553,13 @@ self.addEventListener(
       }
 
       if (
-        destination === 'image'
+        destination === 'image' ||
+        !destination ||
+        destination === ''
       ) {
 
         event.respondWith(
-          staleWhileRevalidateMedia(
+          cacheFirstMedia(
             request
           )
         );
@@ -570,7 +568,7 @@ self.addEventListener(
       }
 
       event.respondWith(
-        staleWhileRevalidateMedia(
+        cacheFirstMedia(
           request
         )
       );
