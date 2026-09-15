@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import type { Song, AudioTrack, User, ReactionType } from '../types';
 import { VerifiedBadge } from './VerifiedBadge';
+import { PostUploadProgressBanner, PostUploadState } from './PostUploadProgress';
 import {
   getCachedComments,
   setCachedComments,
@@ -2090,6 +2091,7 @@ interface AudioUploadModalProps {
   onUploaded: () => void;
   initialNativeAudioFile?: File | null;
   initialNativeCoverFile?: File | null;
+  onUploadProgress?: (state: PostUploadState | null | ((prev: PostUploadState | null) => PostUploadState | null)) => void;
 }
 
 const AudioUploadModal: React.FC<AudioUploadModalProps> = ({ 
@@ -2098,6 +2100,7 @@ const AudioUploadModal: React.FC<AudioUploadModalProps> = ({
   onUploaded,
   initialNativeAudioFile,
   initialNativeCoverFile,
+  onUploadProgress,
 }) => {
   const [mode, setMode] = useState<'single' | 'album'>('single');
   const [artist, setArtist] = useState((currentUser as any).name || (currentUser as any).username || '');
@@ -2219,21 +2222,52 @@ const AudioUploadModal: React.FC<AudioUploadModalProps> = ({
     if (!title.trim()) return alert("Title required");
     if (!audioFile) return alert("Audio file required");
 
-    setSubmitting(true);
+    const trackTitle = title.trim();
+    const trackArtist = (artist || "").trim();
+    const trackGenre = (genre || "").trim() || null;
+    const coverToProcess = coverFile;
+    const audioToUpload = audioFile;
+    const preview = coverPreview || DEFAULT_MUSIC_COVER;
+
+    // Immediately close modal so creator can continue browsing and listening
+    onClose();
+
+    if (onUploadProgress) {
+      onUploadProgress({
+        isUploading: true,
+        progress: 15,
+        title: `Publishing "${trackTitle}"…`,
+        secondaryStatus: 'Uploading high-fidelity audio...',
+        previewUrl: preview,
+        isSuccess: false,
+      });
+    }
+
     try {
-      const audioUrl = await uploadToR2(audioFile);
-      const coverUrl = coverFile ? await uploadCompressedCoverToR2(coverFile) : null;
+      if (onUploadProgress) {
+        onUploadProgress((prev) => prev ? ({ ...prev, progress: 35, secondaryStatus: 'Uploading audio to UNERA CDN...' }) : null);
+      }
+      const audioUrl = await uploadToR2(audioToUpload);
+
+      if (onUploadProgress) {
+        onUploadProgress((prev) => prev ? ({ ...prev, progress: 65, secondaryStatus: 'Compressing cover artwork...' }) : null);
+      }
+      const coverUrl = coverToProcess ? await uploadCompressedCoverToR2(coverToProcess) : null;
       const finalCoverUrl = coverUrl || DEFAULT_MUSIC_COVER;
+
+      if (onUploadProgress) {
+        onUploadProgress((prev) => prev ? ({ ...prev, progress: 85, secondaryStatus: 'Registering track with creator library...' }) : null);
+      }
       
       const payload = {
         uploader_id: Number((currentUser as any).id),
-        title: title.trim(),
-        artist_name: (artist || "").trim(),
+        title: trackTitle,
+        artist_name: trackArtist,
         album_name: "Single",
         cover_image_url: finalCoverUrl,
         audio_url: audioUrl,
         duration_seconds: null,
-        genre: (genre || "").trim() || null,
+        genre: trackGenre,
       };
 
       const res = await apiJson<any>("/api/songs", {
@@ -2242,19 +2276,42 @@ const AudioUploadModal: React.FC<AudioUploadModalProps> = ({
       });
 
       if (!res.success) {
-        console.error("songs create failed:", res);
-        alert(res.error || "Failed to publish song");
-        return;
+        throw new Error(res.error || "Failed to publish song");
       }
 
-      alert('Published successfully!');
+      if (onUploadProgress) {
+        onUploadProgress((prev) => prev ? ({
+          ...prev,
+          isUploading: false,
+          isSuccess: true,
+          progress: 100,
+          title: 'Track published!',
+          secondaryStatus: 'Your music is now live on UNERA.',
+        }) : null);
+
+        setTimeout(() => {
+          onUploadProgress(null);
+        }, 2800);
+      }
+
       onUploaded();
-      onClose();
     } catch (e: any) {
       console.error(e);
-      alert(e?.message || "Upload failed");
-    } finally {
-      setSubmitting(false);
+      if (onUploadProgress) {
+        onUploadProgress((prev) => prev ? ({
+          ...prev,
+          isUploading: false,
+          isSuccess: false,
+          progress: 0,
+          title: 'Upload failed',
+          secondaryStatus: e?.message || 'Something went wrong',
+          error: e?.message,
+        }) : null);
+
+        setTimeout(() => {
+          onUploadProgress(null);
+        }, 4000);
+      }
     }
   };
 
@@ -2262,11 +2319,42 @@ const AudioUploadModal: React.FC<AudioUploadModalProps> = ({
     if (!albumTitle.trim()) return alert("Album title required");
     if (albumTracks.length === 0) return alert("Add at least 1 track");
 
-    setSubmitting(true);
-    try {
-      const sharedCoverUrl = coverFile ? await uploadCompressedCoverToR2(coverFile) : null;
+    const albTitle = albumTitle.trim();
+    const tracksToUpload = [...albumTracks];
+    const sharedCoverFile = coverFile;
+    const albArtist = (artist || "").trim();
+    const albGenre = (genre || "").trim() || null;
+    const preview = coverPreview || DEFAULT_MUSIC_COVER;
 
-      for (const t of albumTracks) {
+    // Immediately close modal
+    onClose();
+
+    if (onUploadProgress) {
+      onUploadProgress({
+        isUploading: true,
+        progress: 10,
+        title: `Publishing album "${albTitle}"…`,
+        secondaryStatus: `Preparing ${tracksToUpload.length} tracks...`,
+        previewUrl: preview,
+        isSuccess: false,
+      });
+    }
+
+    try {
+      const sharedCoverUrl = sharedCoverFile ? await uploadCompressedCoverToR2(sharedCoverFile) : null;
+
+      for (let i = 0; i < tracksToUpload.length; i++) {
+        const t = tracksToUpload[i];
+        const stepProgress = 15 + Math.round(((i + 0.5) / tracksToUpload.length) * 75);
+
+        if (onUploadProgress) {
+          onUploadProgress((prev) => prev ? ({
+            ...prev,
+            progress: stepProgress,
+            secondaryStatus: `Uploading track ${i + 1} of ${tracksToUpload.length} ("${t.title}")...`,
+          }) : null);
+        }
+
         const audioUrl = await uploadToR2(t.file);
         const trackCoverUrl = t.coverFile ? await uploadCompressedCoverToR2(t.coverFile) : null;
         const coverUrl = trackCoverUrl || sharedCoverUrl || DEFAULT_MUSIC_COVER;
@@ -2274,12 +2362,12 @@ const AudioUploadModal: React.FC<AudioUploadModalProps> = ({
         const payload = {
           uploader_id: Number((currentUser as any).id),
           title: (t.title || "").trim(),
-          artist_name: (t.artist || artist || "").trim(),
-          album_name: albumTitle.trim(),
+          artist_name: (t.artist || albArtist).trim(),
+          album_name: albTitle,
           cover_image_url: coverUrl,
           audio_url: audioUrl,
           duration_seconds: null,
-          genre: (genre || "").trim() || null,
+          genre: albGenre,
         };
 
         const res = await apiJson<any>("/api/songs", {
@@ -2288,20 +2376,43 @@ const AudioUploadModal: React.FC<AudioUploadModalProps> = ({
         });
 
         if (!res.success) {
-          console.error("album track create failed:", t.title, res);
-          alert(`Failed uploading "${t.title}": ${res.error}`);
-          return;
+          throw new Error(`Failed uploading "${t.title}": ${res.error}`);
         }
       }
 
-      alert('Album published successfully!');
+      if (onUploadProgress) {
+        onUploadProgress((prev) => prev ? ({
+          ...prev,
+          isUploading: false,
+          isSuccess: true,
+          progress: 100,
+          title: 'Album published!',
+          secondaryStatus: `All ${tracksToUpload.length} tracks are now live.`,
+        }) : null);
+
+        setTimeout(() => {
+          onUploadProgress(null);
+        }, 2800);
+      }
+
       onUploaded();
-      onClose();
     } catch (e: any) {
       console.error(e);
-      alert(e?.message || "Album upload failed");
-    } finally {
-      setSubmitting(false);
+      if (onUploadProgress) {
+        onUploadProgress((prev) => prev ? ({
+          ...prev,
+          isUploading: false,
+          isSuccess: false,
+          progress: 0,
+          title: 'Album upload failed',
+          secondaryStatus: e?.message || 'Something went wrong',
+          error: e?.message,
+        }) : null);
+
+        setTimeout(() => {
+          onUploadProgress(null);
+        }, 4000);
+      }
     }
   };
 
@@ -2637,6 +2748,9 @@ interface MusicSystemProps {
   onOpenComments?: (track: AudioTrack) => void;
   onShare?: (track: AudioTrack) => void;
   onBack?: () => void;
+  uploadState?: PostUploadState | null;
+  onDismissUpload?: () => void;
+  onUploadStateChange?: (state: PostUploadState | null | ((prev: PostUploadState | null) => PostUploadState | null)) => void;
 }
 
 const MusicSystem: React.FC<MusicSystemProps> = ({ 
@@ -2661,7 +2775,15 @@ const MusicSystem: React.FC<MusicSystemProps> = ({
   onOpenComments,
   onShare,
   onBack,
+  uploadState,
+  onDismissUpload,
+  onUploadStateChange,
 }) => {
+  const [localUploadState, setLocalUploadState] = useState<PostUploadState | null>(null);
+  const activeUploadState = uploadState !== undefined ? uploadState : localUploadState;
+  const dismissUpload = onDismissUpload || (() => setLocalUploadState(null));
+  const setUploadProgressState = onUploadStateChange || setLocalUploadState;
+
   const [view, setView] = useState<'music' | 'upload' | 'dashboard' | 'artist' | 'albums' | 'album'>('music');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedArtistId, setSelectedArtistId] = useState<number | null>(null);
@@ -3049,6 +3171,14 @@ const MusicSystem: React.FC<MusicSystemProps> = ({
       </div>
 
       <div className="max-w-7xl mx-auto px-4 py-8">
+        {activeUploadState && (
+          <div className="mb-6 animate-fade-in">
+            <PostUploadProgressBanner
+              uploadState={activeUploadState}
+              onDismiss={dismissUpload}
+            />
+          </div>
+        )}
         {error && (
           <div className="bg-red-500/10 border border-red-500/30 text-red-300 px-4 py-3 rounded-xl mb-6">
             <div className="flex items-center justify-between gap-3">
@@ -3448,6 +3578,7 @@ const MusicSystem: React.FC<MusicSystemProps> = ({
               }}
               initialNativeAudioFile={nativeAudioFile}
               initialNativeCoverFile={nativeCoverFile}
+              onUploadProgress={setUploadProgressState}
             />
           </div>
         )}

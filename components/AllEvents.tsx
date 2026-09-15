@@ -1,6 +1,7 @@
 // AllEvents.tsx
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { User } from "../types";
+import { PostUploadProgressBanner, PostUploadState } from "./PostUploadProgress";
 
 // ========== API HELPERS ==========
 const authHeaders = () => {
@@ -521,6 +522,8 @@ interface AllEventsProps {
   onProfileClick: (id: number) => void;
   onCreateEventClick?: () => void;
   onNavigateBack?: () => void;
+  uploadState?: PostUploadState | null;
+  onDismissUpload?: () => void;
 }
 
 // ========== FILTER CHIP ==========
@@ -1374,6 +1377,8 @@ export const AllEvents: React.FC<AllEventsProps> = ({
   onProfileClick,
   onCreateEventClick,
   onNavigateBack,
+  uploadState,
+  onDismissUpload,
 }) => {
   const [events, setEvents] = useState<EventFromAPI[]>([]);
   const [filteredEvents, setFilteredEvents] = useState<EventFromAPI[]>([]);
@@ -1778,6 +1783,14 @@ export const AllEvents: React.FC<AllEventsProps> = ({
       </div>
 
       <div className="max-w-7xl mx-auto px-4 py-6">
+        {uploadState && (
+          <div className="mb-6 animate-fade-in">
+            <PostUploadProgressBanner
+              uploadState={uploadState}
+              onDismiss={onDismissUpload}
+            />
+          </div>
+        )}
         <div className="bg-[#0B1120] rounded-2xl p-4 border border-[#1E293B] mb-6 shadow-sm">
           <div className="relative mb-4">
             <i className="fas fa-search absolute left-4 top-1/2 -translate-y-1/2 text-[#94A3B8] text-sm"></i>

@@ -3157,7 +3157,7 @@ return (
           {groupTab === 'Discussion' && (
             <div className="animate-fade-in">
             
-      {isMember && canPost && canUserPost(currentUser?.id ?? 0) && (
+      {isMember && canPost && canUserPost(currentUser?.id ?? 0) && !uploadState?.isUploading && (
   <div className="bg-[#0F172A] rounded-xl p-3 mb-4 border border-[#1E293B] shadow-sm flex gap-3 items-center cursor-pointer mx-0 transition-colors hover:bg-[#141E33]" onClick={() => { 
     if (activeGroup?.category === 'buy_sell') { 
       setPostMetadata({ currency: 'USD', condition: 'Used - Good', location: '', price: '', status: 'available' }); 

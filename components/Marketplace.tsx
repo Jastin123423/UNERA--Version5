@@ -3,6 +3,84 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { User, Product } from '../types';
 import { MARKETPLACE_CATEGORIES, MARKETPLACE_COUNTRIES } from '../constants';
+import { imageCache, observeForThumbnail, observeForFeed } from '../utils/imageCache';
+import { PostUploadProgressBanner, PostUploadState } from './PostUploadProgress';
+
+// ==================== OPTIMIZED DATA-SAVING MARKETPLACE IMAGE ====================
+
+const OptimizedMarketplaceImage: React.FC<{
+  thumbUrl?: string;
+  feedUrl?: string;
+  alt: string;
+  className?: string;
+}> = ({ thumbUrl, feedUrl, alt, className = "w-full h-full object-cover" }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const targetFeed = feedUrl || thumbUrl || '';
+  const targetThumb = thumbUrl || feedUrl || '';
+
+  const isPreCached = imageCache.isCached(targetFeed) || imageCache.isCached(targetThumb);
+
+  const [activeSrc, setActiveSrc] = useState<string>(() => {
+    if (imageCache.isCached(targetFeed)) return targetFeed;
+    if (imageCache.isCached(targetThumb)) return targetThumb;
+    return '';
+  });
+  const [isLoaded, setIsLoaded] = useState<boolean>(isPreCached);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    if (imageCache.isCached(targetFeed)) {
+      setActiveSrc(targetFeed);
+      setIsLoaded(true);
+      return;
+    }
+
+    // Stage 1: Load thumbnail when within 1500px (~3 rows ahead)
+    const cleanupThumb = observeForThumbnail(el, () => {
+      if (!activeSrc && targetThumb) {
+        setActiveSrc(targetThumb);
+        imageCache.markCached(targetThumb);
+      }
+    });
+
+    // Stage 2: Upgrade to feed resolution when within 500px (~1 row ahead)
+    const cleanupFeed = observeForFeed(el, () => {
+      if (targetFeed) {
+        setActiveSrc(targetFeed);
+        imageCache.markCached(targetFeed);
+      }
+    });
+
+    return () => {
+      cleanupThumb();
+      cleanupFeed();
+    };
+  }, [targetThumb, targetFeed, activeSrc]);
+
+  return (
+    <div ref={containerRef} className="w-full h-full bg-[#0F172A] relative overflow-hidden flex items-center justify-center">
+      {activeSrc ? (
+        <img
+          src={activeSrc}
+          alt={alt}
+          className={`${className} transition-opacity duration-300 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}
+          onLoad={() => {
+            setIsLoaded(true);
+            if (activeSrc) imageCache.markCached(activeSrc);
+          }}
+          loading="lazy"
+          decoding="async"
+        />
+      ) : (
+        <div className="w-full h-full bg-gradient-to-br from-[#0F172A] to-[#1E293B] flex items-center justify-center">
+          <i className="fas fa-bag-shopping text-[#334155] text-2xl"></i>
+        </div>
+      )}
+    </div>
+  );
+};
 
 // ==================== NATIVE APP DETECTION ====================
 
@@ -991,6 +1069,9 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
 interface MarketplacePageProps {
   currentUser: User | null;
   products: Product[];
+  uploadState?: PostUploadState | null;
+  onDismissUpload?: () => void;
+  onUploadStateChange?: (state: PostUploadState | null | ((prev: PostUploadState | null) => PostUploadState | null)) => void;
   onNavigateHome: () => void;
   onCreateProduct: (productData: Partial<Product>) => void;
   onViewProduct: (product: Product) => void;
@@ -999,10 +1080,17 @@ interface MarketplacePageProps {
 export const MarketplacePage: React.FC<MarketplacePageProps> = ({
   currentUser,
   products,
+  uploadState,
+  onDismissUpload,
+  onUploadStateChange,
   onNavigateHome,
   onCreateProduct,
   onViewProduct,
 }) => {
+  const [localUploadState, setLocalUploadState] = useState<PostUploadState | null>(null);
+  const activeUploadState = uploadState !== undefined ? uploadState : localUploadState;
+  const dismissUpload = onDismissUpload || (() => setLocalUploadState(null));
+  const setUploadProgressState = onUploadStateChange || setLocalUploadState;
   const [selectedCountry, setSelectedCountry] = useState<string>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [marketMode, setMarketMode] = useState<MarketMode>('for_you');
@@ -1159,14 +1247,64 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
       return;
     }
 
+    // Capture all values into closure for background task
+    const pTitle = title.trim();
+    const pCategory = category;
+    const pDesc = desc.trim();
+    const pAddress = address.trim();
+    const pMainPrice = parsedMainPrice;
+    const pDiscountPrice = parsedDiscountPrice;
+    const pQty = parseInt(quantity || '1', 10) || 1;
+    const pPhone = phone.trim();
+    const imgsToUpload = [...images];
+    const previewUrl = imgsToUpload[0]?.data || '';
+    const countryFromResolved = resolveListingCountry({
+      manualCountry,
+      selectedAddress: address,
+      typedAddress: address,
+      currentUser,
+    });
+
+    // Immediately close modal & reset form fields so user can continue exploring!
+    setShowSellModal(false);
+    setTitle('');
+    setCategory('');
+    setDesc('');
+    setAddress('');
+    setMainPriceRaw('');
+    setDiscountPriceRaw('');
+    setQuantity('1');
+    setImages([]);
+    setDetectedCountry('all');
+    setManualCountry('all');
+
+    // Start upload progress banner with percentage
+    setUploadProgressState({
+      isUploading: true,
+      progress: 15,
+      title: `Listing "${pTitle}" on Marketplace…`,
+      secondaryStatus: imgsToUpload.length > 1
+        ? `Preparing ${imgsToUpload.length} photos...`
+        : 'Preparing listing details...',
+      previewUrl,
+      isSuccess: false,
+    });
+
     try {
-      setIsUploading(true);
-
       const uploadedVariants: ProductImageVariant[] = [];
+      const totalImages = imgsToUpload.length;
 
-      for (const img of images) {
+      for (let i = 0; i < totalImages; i++) {
+        const img = imgsToUpload[i];
+        const stepProgress = 20 + Math.round(((i + 1) / (totalImages + 1)) * 60);
+
+        setUploadProgressState((prev) => prev ? ({
+          ...prev,
+          progress: stepProgress,
+          secondaryStatus: `Optimizing photo ${i + 1} of ${totalImages} (high-efficiency compression)...`,
+        }) : null);
+
         if (img.isNative && img.nativeMeta) {
-          // Use native uploaded URLs directly - no re-upload needed
           uploadedVariants.push({
             thumb: img.nativeMeta.thumb,
             feed: img.nativeMeta.feed,
@@ -1174,31 +1312,29 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
             type: 'image',
           });
         } else if (img.file) {
-          // Upload web-picked image
           const variant = await uploadMarketplaceImageBundle(img.file);
           uploadedVariants.push(variant);
         }
       }
 
+      setUploadProgressState((prev) => prev ? ({
+        ...prev,
+        progress: 88,
+        secondaryStatus: 'Publishing listing to Marketplace catalog...',
+      }) : null);
+
       const uploadedUrls = uploadedVariants.map((x) => x.feed).filter(Boolean);
 
-      const countryFromResolved = resolveListingCountry({
-        manualCountry,
-        selectedAddress: address,
-        typedAddress: address,
-        currentUser,
-      });
-
       const newProduct: Partial<Product> = {
-        title,
-        category,
-        description: desc,
+        title: pTitle,
+        category: pCategory,
+        description: pDesc,
         country: countryFromResolved,
-        address,
-        main_price: parsedMainPrice,
-        discount_price: parsedDiscountPrice > 0 ? parsedDiscountPrice : null,
-        quantity: parseInt(quantity || '1', 10) || 1,
-        phone_number: phone,
+        address: pAddress,
+        main_price: pMainPrice,
+        discount_price: pDiscountPrice > 0 ? pDiscountPrice : null,
+        quantity: pQty,
+        phone_number: pPhone,
         images: uploadedUrls,
         image_variants: uploadedVariants,
         status: 'active',
@@ -1208,31 +1344,42 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
         created_at: new Date().toISOString(),
       };
 
-      onCreateProduct(newProduct);
-      setShowSellModal(false);
+      await onCreateProduct(newProduct);
 
       // Cleanup blob URLs
-      images.forEach((img) => {
+      imgsToUpload.forEach((img) => {
         if (!img.isNative && img.data.startsWith('blob:')) {
           URL.revokeObjectURL(img.data);
         }
       });
 
-      setTitle('');
-      setCategory('');
-      setDesc('');
-      setAddress('');
-      setMainPriceRaw('');
-      setDiscountPriceRaw('');
-      setQuantity('1');
-      setImages([]);
-      setDetectedCountry('all');
-      setManualCountry('all');
+      setUploadProgressState((prev) => prev ? ({
+        ...prev,
+        isUploading: false,
+        isSuccess: true,
+        progress: 100,
+        title: 'Item listed successfully!',
+        secondaryStatus: 'Your product is now live on Marketplace.',
+      }) : null);
+
+      setTimeout(() => {
+        setUploadProgressState(null);
+      }, 2800);
     } catch (error: any) {
       console.error('Failed to upload product:', error);
-      alert(`Failed to upload product: ${error.message}`);
-    } finally {
-      setIsUploading(false);
+      setUploadProgressState((prev) => prev ? ({
+        ...prev,
+        isUploading: false,
+        isSuccess: false,
+        progress: 0,
+        title: 'Failed to list item',
+        secondaryStatus: error?.message || 'Something went wrong while listing your item',
+        error: error?.message,
+      }) : null);
+
+      setTimeout(() => {
+        setUploadProgressState(null);
+      }, 4000);
     }
   };
 
@@ -1382,6 +1529,16 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
         </div>
       </div>
 
+      {/* Upload progress banner */}
+      {activeUploadState && (
+        <div className="px-3 pt-3">
+          <PostUploadProgressBanner
+            uploadState={activeUploadState}
+            onDismiss={dismissUpload}
+          />
+        </div>
+      )}
+
       {/* Grid */}
       <div className="px-[2px] pt-[2px]">
         {searchFilteredProducts.length > 0 ? (
@@ -1405,22 +1562,21 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
                   onClick={() => onViewProduct(product)}
                   className="relative aspect-[0.86] bg-[#0F172A] overflow-hidden text-left"
                 >
-                  <img
-                    src={cover}
+                  <OptimizedMarketplaceImage
+                    thumbUrl={productVariants[0]?.thumb}
+                    feedUrl={productVariants[0]?.feed || productVariants[0]?.full || legacyImages[0] || cover}
                     alt={product.title}
                     className="w-full h-full object-cover"
-                    loading="lazy"
-                    decoding="async"
                   />
 
-                  <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/75 via-black/20 to-transparent">
+                  <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/75 via-black/20 to-transparent z-10">
                     <div className="text-white font-bold text-[15px] leading-tight drop-shadow">
                       {formatPriceWithCurrency(displayPrice, productCountryCode)}
                     </div>
                   </div>
 
                   {isFreshProduct(product) && (
-                    <div className="absolute top-2 right-2 bg-[#1877F2] text-white text-[10px] font-bold px-2 py-1 rounded-full">
+                    <div className="absolute top-2 right-2 bg-[#1877F2] text-white text-[10px] font-bold px-2 py-1 rounded-full z-10">
                       New
                     </div>
                   )}

@@ -6834,8 +6834,19 @@ const createReel = useCallback(async (
     const cover =
       safeString(eventData?.cover_url ?? eventData?.image ?? eventData?.cover ?? eventData?.cover_image, '') || DEFAULT_EVENT_COVER;
 
+    const eventTitle = safeString(eventData?.title).trim() || 'Event';
+
+    setPostUploadState({
+      isUploading: true,
+      progress: 20,
+      title: `Publishing "${eventTitle}"…`,
+      secondaryStatus: 'Preparing event details...',
+      previewUrl: cover,
+      isSuccess: false,
+    });
+
     const payload = {
-      title: safeString(eventData?.title).trim(),
+      title: eventTitle,
       description: safeString(eventData?.description).trim(),
       event_date: eventDateISO,
       event_time: apiTime || uiTime || '12:00',
@@ -6849,61 +6860,103 @@ const createReel = useCallback(async (
       group_id: eventData?.group_id ? Number(eventData.group_id) : null,
     };
 
-    const res = await apiFetch('/api/events', { method: 'POST', body: JSON.stringify(payload) });
-    const newEvent = normalizeEvent(res?.event ?? res);
-    
-    setEvents((prev: any) => [newEvent, ...safeArray(prev)]);
-
     try {
-      const eventPostPayload = {
-        user_id: currentUser.id,
-        content: `🎉 Check out my new event: ${newEvent.title}`,
-        type: "event",
-        event_id: newEvent.id,
-        visibility: 'public',
-        feed_key: `event:${newEvent.id}`,
-        meta: {
-          kind: "event",
+      setPostUploadState((prev) => prev ? ({
+        ...prev,
+        progress: 55,
+        secondaryStatus: 'Registering event with UNERA...',
+      }) : null);
+
+      const res = await apiFetch('/api/events', { method: 'POST', body: JSON.stringify(payload) });
+      const newEvent = normalizeEvent(res?.event ?? res);
+      
+      setEvents((prev: any) => [newEvent, ...safeArray(prev)]);
+
+      setPostUploadState((prev) => prev ? ({
+        ...prev,
+        progress: 80,
+        secondaryStatus: 'Sharing event announcement to feed...',
+      }) : null);
+
+      try {
+        const eventPostPayload = {
+          user_id: currentUser.id,
+          content: `🎉 Check out my new event: ${newEvent.title}`,
+          type: "event",
           event_id: newEvent.id,
-          event: {
-            id: newEvent.id,
-            title: newEvent.title,
-            description: newEvent.description,
-            date: newEvent.date,
-            time: newEvent.time,
-            location: newEvent.location,
-            cover_url: newEvent.cover_url,
-            attendees: newEvent.attendees || [],
-            interested: newEvent.interestedIds || [],
+          visibility: 'public',
+          feed_key: `event:${newEvent.id}`,
+          meta: {
+            kind: "event",
+            event_id: newEvent.id,
+            event: {
+              id: newEvent.id,
+              title: newEvent.title,
+              description: newEvent.description,
+              date: newEvent.date,
+              time: newEvent.time,
+              location: newEvent.location,
+              cover_url: newEvent.cover_url,
+              attendees: newEvent.attendees || [],
+              interested: newEvent.interestedIds || [],
+            }
           }
+        };
+
+        const postRes = await apiFetch('/api/posts', { 
+          method: 'POST', 
+          body: JSON.stringify(eventPostPayload) 
+        });
+        
+        const newPost = normalizePost(postRes?.post ?? postRes);
+        
+        setPosts(prev => {
+          const next = [newPost, ...safeArray(prev)];
+          lastGoodPostsRef.current = next;
+          stableFeedRef.current = next;
+          return next;
+        });
+
+        if (selectedUserId === currentUser.id) {
+          setProfilePosts(prev => [newPost, ...safeArray(prev)]);
         }
-      };
 
-      const postRes = await apiFetch('/api/posts', { 
-        method: 'POST', 
-        body: JSON.stringify(eventPostPayload) 
-      });
-      
-      const newPost = normalizePost(postRes?.post ?? postRes);
-      
-      setPosts(prev => {
-        const next = [newPost, ...safeArray(prev)];
-        lastGoodPostsRef.current = next;
-        stableFeedRef.current = next;
-        return next;
-      });
-
-      if (selectedUserId === currentUser.id) {
-        setProfilePosts(prev => [newPost, ...safeArray(prev)]);
+        pushSeenIds([Number(newPost.id)]);
+      } catch (error) {
+        console.error('Failed to create event post:', error);
       }
 
-      pushSeenIds([Number(newPost.id)]);
-    } catch (error) {
-      console.error('Failed to create event post:', error);
-    }
+      setPostUploadState((prev) => prev ? ({
+        ...prev,
+        isUploading: false,
+        isSuccess: true,
+        progress: 100,
+        title: 'Event published!',
+        secondaryStatus: 'Your event is now live for attendees.',
+      }) : null);
 
-    scheduleSilentRefresh();
-    return newEvent;
+      setTimeout(() => {
+        setPostUploadState(null);
+      }, 2800);
+
+      scheduleSilentRefresh();
+      return newEvent;
+    } catch (error) {
+      console.error('Failed to create event:', error);
+      setPostUploadState((prev) => prev ? ({
+        ...prev,
+        isUploading: false,
+        isSuccess: false,
+        progress: 0,
+        title: 'Failed to create event',
+        secondaryStatus: (error as any)?.message || 'Something went wrong',
+        error: (error as any)?.message,
+      }) : null);
+      setTimeout(() => {
+        setPostUploadState(null);
+      }, 4000);
+      throw error;
+    }
   }, [currentUser, requireAuth, selectedUserId]);
 
   //====Refresh group members helper
@@ -10625,7 +10678,7 @@ return (
       </div>
     )}
 
-    {currentUser && (
+    {currentUser && !postUploadState?.isUploading && (
       <CreatePost
         currentUser={currentUser}
         onProfileClick={(id) => openProfile(id)}
@@ -10789,6 +10842,9 @@ return (
           <MarketplacePage
             currentUser={currentUser}
             products={products}
+            uploadState={postUploadState}
+            onDismissUpload={() => setPostUploadState(null)}
+            onUploadStateChange={setPostUploadState}
             onNavigateHome={() => handleNavigate('home')}
             onCreateProduct={createProduct}
             onViewProduct={setActiveProduct}
@@ -10889,6 +10945,9 @@ return (
     {view === 'music' && (
   <MusicSystem
     currentUser={currentUser}
+    uploadState={postUploadState}
+    onDismissUpload={() => setPostUploadState(null)}
+    onUploadStateChange={setPostUploadState}
     onPlayTrack={onPlayTrack}
     onProfileClick={(id) => openProfile(id)}
     likedTracks={likedTracks}
@@ -10935,6 +10994,8 @@ return (
             <AllEvents
               currentUser={currentUser ?? null}
               users={users}
+              uploadState={postUploadState}
+              onDismissUpload={() => setPostUploadState(null)}
               onProfileClick={(id) => openProfile(id)}
               onEventClick={(eventId) => {
                 setActiveEventId(eventId);
@@ -11464,13 +11525,12 @@ return (
       <CreateEventModal
         currentUser={currentUser}
         onClose={() => setShowCreateEventModal(false)}
-        onCreate={async (eventData) => {
-          try {
-            const newEvent = await createEvent(eventData);
-            setShowCreateEventModal(false);
-          } catch (error) {
-            console.error('Failed to create event:', error);
-          }
+        onCreate={(eventData) => {
+          // Immediately close modal so user can continue exploring while event is created in background
+          setShowCreateEventModal(false);
+          createEvent(eventData).catch((error) => {
+            console.error('Failed to create event in background:', error);
+          });
         }}
       />
     )}
