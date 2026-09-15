@@ -10,8 +10,10 @@ import {
   RichText,
   getMediaTypeInfo,
   avatarFrom,
-  topReactionEmojis
+  topReactionEmojis,
+  MediaGrid
 } from './Feed';
+import { PostUploadProgressBanner, PostUploadState } from './PostUploadProgress';
 import { CreateEventModal } from './Events';
 import { SavePostButton } from './SavePostButton';
 import { VerifiedBadge } from './VerifiedBadge';
@@ -230,152 +232,6 @@ const ExpandableRichText: React.FC<{
           {expanded ? 'See less' : 'See more'}
         </button>
       )}
-    </div>
-  );
-};
-
-const GroupLazyTile = ({
-  url,
-  index,
-  className,
-  showOverlay,
-  extra,
-  onOpen
-}: {
-  url: string;
-  index: number;
-  className: string;
-  showOverlay?: boolean;
-  extra?: number;
-  onOpen: (url: string, index: number) => void;
-}) => {
-  const containerRef = useRef<HTMLButtonElement | null>(null);
-  const cached = imageCache.isCached(url);
-  const [activeSrc, setActiveSrc] = useState<string>(() => (cached ? url : ''));
-  const [isLoaded, setIsLoaded] = useState<boolean>(() => cached);
-
-  useEffect(() => {
-    if (activeSrc && isLoaded) return;
-    if (imageCache.isCached(url)) {
-      setActiveSrc(url);
-      setIsLoaded(true);
-      return;
-    }
-
-    const el = containerRef.current;
-    if (!el) return;
-
-    // Stage 2: ~1 post away / in viewport
-    const unobserveFeed = observeForFeed(el, () => {
-      const img = new Image();
-      img.src = url;
-      img.onload = () => {
-        imageCache.markCached(url);
-        setActiveSrc(url);
-        setIsLoaded(true);
-      };
-      img.onerror = () => {
-        setActiveSrc(url);
-        setIsLoaded(true);
-      };
-    });
-
-    // Stage 1: ~3 posts away
-    const unobserveThumb = observeForThumbnail(el, () => {
-      setActiveSrc((prev) => prev || url);
-    });
-
-    return () => {
-      unobserveThumb();
-      unobserveFeed();
-    };
-  }, [url, activeSrc, isLoaded]);
-
-  return (
-    <button
-      ref={containerRef}
-      type="button"
-      onClick={(e) => { e.stopPropagation(); onOpen(url, index); }}
-      className={`relative overflow-hidden bg-[#162032] ${className}`}
-      style={{ borderRadius: 0 }}
-    >
-      {(!activeSrc || !isLoaded) && (
-        <div className="absolute inset-0 bg-[#162032] flex items-center justify-center pointer-events-none">
-          <div className="w-8 h-8 rounded-full bg-[#1E293B]/50 flex items-center justify-center">
-            <i className="fas fa-image text-[#334155] text-xs" />
-          </div>
-        </div>
-      )}
-      {activeSrc && (
-        <img
-          src={activeSrc}
-          alt=""
-          loading="lazy"
-          decoding="async"
-          className={`w-full h-full object-cover transition-opacity duration-300 ease-out ${
-            isLoaded ? 'opacity-100' : 'opacity-70'
-          }`}
-          onLoad={() => {
-            imageCache.markCached(url);
-            setIsLoaded(true);
-          }}
-          onError={(e) => {
-            (e.currentTarget as HTMLImageElement).style.opacity = '0';
-          }}
-        />
-      )}
-      {showOverlay && Boolean(extra && extra > 0) && (
-        <div className="absolute inset-0 bg-black/60 flex items-center justify-center pointer-events-none">
-          <span className="text-white font-black text-3xl">+{extra}</span>
-        </div>
-      )}
-    </button>
-  );
-};
-
-const MediaGrid: React.FC<{ media: { url: string; kind?: string }[]; onOpen: (url: string, index: number) => void; }> = ({ media = [], onOpen }) => {
-  const total = media.length;
-  const show = total <= 4 ? media : media.slice(0, 4);
-  const extra = total - 4;
-
-  if (total === 0) return null;
-  if (total === 1) {
-    return (
-      <div className="w-full bg-[#050B18] overflow-hidden flex justify-center">
-        <GroupLazyTile
-          url={show[0].url}
-          index={0}
-          className="w-full min-h-[260px] max-h-[650px]"
-          onOpen={onOpen}
-        />
-      </div>
-    );
-  }
-  if (total === 2) {
-    return (
-      <div className="w-full grid grid-cols-2 gap-[2px] bg-black">
-        <GroupLazyTile url={show[0].url} index={0} className="h-[320px] w-full" onOpen={onOpen} />
-        <GroupLazyTile url={show[1].url} index={1} className="h-[320px] w-full" onOpen={onOpen} />
-      </div>
-    );
-  }
-  if (total === 3) {
-    return (
-      <div className="w-full grid grid-cols-2 gap-[2px] bg-black">
-        <GroupLazyTile url={show[0].url} index={0} className="h-[420px] w-full" onOpen={onOpen} />
-        <div className="grid grid-rows-2 gap-[2px] h-[420px]">
-          <GroupLazyTile url={show[1].url} index={1} className="w-full h-full" onOpen={onOpen} />
-          <GroupLazyTile url={show[2].url} index={2} className="w-full h-full" onOpen={onOpen} />
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="w-full grid grid-cols-2 gap-[2px] bg-black">
-      <GroupLazyTile url={show[0].url} index={0} className="h-[260px] w-full" onOpen={onOpen} />
-      <GroupLazyTile url={show[1].url} index={1} className="h-[260px] w-full" onOpen={onOpen} />
-      <GroupLazyTile url={show[2].url} index={2} className="h-[260px] w-full" onOpen={onOpen} />
-      <GroupLazyTile url={show[3].url} index={3} className="h-[260px] w-full" showOverlay={extra > 0} extra={extra} onOpen={onOpen} />
     </div>
   );
 };
@@ -995,7 +851,7 @@ const RecruitmentPost: React.FC<any> = (props) => {
                 </div>
               </div>
             )}
-            {imageMedia.length > 0 && (<div className="mb-4"><MediaGrid media={imageMedia} onOpen={(url, index) => { const urls = imageMedia.map(m => m.url); openGallery(urls, index); }} /></div>)}
+            {imageMedia.length > 0 && (<div className="mb-4"><MediaGrid media={imageMedia} onOpen={(url, index) => { const urls = imageMedia.map(m => m.full || m.feed || m.url); openGallery(urls, index); }} /></div>)}
             {videoMedia.length > 0 && (<div className="mb-4"><video src={videoMedia[0].url} className="w-full rounded-lg" controls playsInline /></div>)}
             {applicationType && applicationValue && !isExpired && (<button onClick={handleApply} disabled={applied} className="w-full bg-[#1B74E4] text-white py-3 rounded-lg font-bold text-lg hover:bg-[#1A6ED8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md">{applied ? (<span className="flex items-center justify-center gap-2"><i className="fas fa-check"></i>Applied</span>) : 'Apply Now'}</button>)}
             {isExpired && (<div className="w-full bg-[#F3425F]/10 text-[#F3425F] py-3 rounded-lg font-bold text-lg text-center border border-[#F3425F]/20">This job posting has expired</div>)}
@@ -1141,7 +997,7 @@ const BuySellPost: React.FC<any> = (props) => {
         </div>
         <div className="px-3 md:px-4 pb-2"><span className="text-[#F8FAFC] font-black text-2xl">{formattedPrice}</span>{condition && (<span className="ml-2 text-[#94A3B8] text-sm">• {condition}</span>)}</div>
         {location && (<div className="px-3 md:px-4 pb-2"><div className="flex items-center gap-1 text-[#94A3B8]"><i className="fas fa-map-marker-alt text-xs text-[#F7B928]"></i><span className="text-xs">{location}</span></div></div>)}
-        {imageMedia.length > 0 && (<MediaGrid media={imageMedia} onOpen={(url, index) => { const urls = imageMedia.map(m => m.url); openGallery(urls, index); }} />)}
+        {imageMedia.length > 0 && (<MediaGrid media={imageMedia} onOpen={(url, index) => { const urls = imageMedia.map(m => m.full || m.feed || m.url); openGallery(urls, index); }} />)}
         {videoMedia.length > 0 && (<div className="px-3 md:px-4 mb-3"><video src={videoMedia[0].url} className="w-full rounded-lg" controls playsInline /></div>)}
         {post.content && (<div className="px-3 md:px-4 py-3"><p className="text-[#F8FAFC] text-base whitespace-pre-wrap">{post.content}</p></div>)}
         {(localReactionCount > 0 || commentCount > 0) && (
@@ -1283,7 +1139,7 @@ const GeneralGroupPost: React.FC<any> = ({
           )}
         </div>
         {p.content && (<div className="px-3 md:px-4 pb-2"><ExpandableRichText text={String(p.content)} users={users} onProfileClick={onProfileClick} onHashtagClick={onHashtagClick} maxWords={25} fontSizePx={21} onSeeMore={handleSeeMore} /></div>)}
-        {imageMedia.length > 0 && (<MediaGrid media={imageMedia.map((m) => ({ url: m.url }))} onOpen={(url, index) => { const urls = imageMedia.map(m => m.url); openGallery(urls, index); }} />)}
+        {imageMedia.length > 0 && (<MediaGrid media={imageMedia} onOpen={(url, index) => { const urls = imageMedia.map(m => m.full || m.feed || m.url); openGallery(urls, index); }} />)}
         {videoMedia.length > 0 && (<div className="cursor-pointer relative h-[500px] bg-black" onClick={() => onVideoClick?.(post)}><video src={videoMedia[0].url} className="w-full h-full object-cover" preload="metadata" playsInline muted onError={(e) => { console.error('Failed to load video:', videoMedia[0].url); e.currentTarget.style.display = 'none'; }} /><div className="absolute inset-0 flex items-center justify-center"><i className="fas fa-play text-white text-4xl opacity-50"></i></div></div>)}
         {(finalReactionCount > 0 || commentCount > 0) && (
           <div className="px-3 md:px-4 py-2 flex items-center justify-between text-[#94A3B8] text-[14px] border-t border-[#1E293B]">
@@ -1588,6 +1444,8 @@ const CreateGroupFullPageModal: React.FC<{
   currentUser,
   groups = [],
   users = [],
+  uploadState,
+  onDismissUpload,
   onCreateGroup,
   onJoinGroup,
   onLeaveGroup,
@@ -2166,30 +2024,38 @@ const handleGroupClick = async (group: Group) => {
       };
     }
 
-    try {
-      await onPostToGroup(activeGroup.id, postContent.trim(), postFiles, metadata);
-      setShowGroupPostModal(false);
-      setPostContent('');
-      setPostFiles([]);
-      setPreviews([]);
-      // ✅ Reset with defaults after submit
-      if (activeGroup.category === 'buy_sell') {
-        setPostMetadata({ 
-          currency: 'USD', 
-          condition: 'Used - Good', 
-          location: '', 
-          price: '', 
-          status: 'available' 
-        });
-      } else {
-        setPostMetadata({});
-      }
-      if (postFileInputRef.current) postFileInputRef.current.value = '';
-      postsLoadedRef.current = false;
-      loadGroupPosts(true);
-    } catch (error) { 
-      console.error('Failed to create group post:', error); 
+    const targetGroupId = activeGroup.id;
+    const contentToSend = postContent.trim();
+    const filesToSend = [...postFiles];
+    const metadataToSend = { ...metadata };
+
+    // Immediately close modal and reset inputs so the user can continue exploring feeds/group data without waiting
+    setShowGroupPostModal(false);
+    setPostContent('');
+    setPostFiles([]);
+    setPreviews([]);
+    if (activeGroup.category === 'buy_sell') {
+      setPostMetadata({ 
+        currency: 'USD', 
+        condition: 'Used - Good', 
+        location: '', 
+        price: '', 
+        status: 'available' 
+      });
+    } else {
+      setPostMetadata({});
     }
+    if (postFileInputRef.current) postFileInputRef.current.value = '';
+
+    // Asynchronously submit with progress bar and percent counter
+    onPostToGroup(targetGroupId, contentToSend, filesToSend, metadataToSend)
+      .then(() => {
+        postsLoadedRef.current = false;
+        loadGroupPosts(true);
+      })
+      .catch((error: any) => {
+        console.error('Failed to create group post:', error);
+      });
   };
 
 const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>, type: 'cover' | 'profile') => {
@@ -2647,6 +2513,15 @@ const formatNewPostsText = (g: Group) => {
             </div>
           </div>
         </div>
+
+        {uploadState && (
+          <div className="max-w-[900px] mx-auto px-4 pt-3">
+            <PostUploadProgressBanner
+              uploadState={uploadState}
+              onDismiss={onDismissUpload}
+            />
+          </div>
+        )}
 
         {/* Content */}
         <div className="max-w-[900px] mx-auto">
@@ -3269,6 +3144,15 @@ return (
         
         {/* Content Area */}
         <div className="max-w-[700px] mx-auto px-0 md:px-4">
+          {uploadState && (
+            <div className="mb-4">
+              <PostUploadProgressBanner
+                uploadState={uploadState}
+                onDismiss={onDismissUpload}
+              />
+            </div>
+          )}
+
           {/* Discussion Tab */}
           {groupTab === 'Discussion' && (
             <div className="animate-fade-in">
@@ -3284,7 +3168,7 @@ return (
   }}>
     <img src={avatarFrom(currentUser)} className="w-10 h-10 rounded-full bg-[#1E293B] object-cover" alt="" />
     <div className="flex-1 bg-[#1E293B] transition-colors rounded-full px-4 py-2.5">
-      <span className="text-[#94A3B8] text-[17px]">
+      <span className="text-[#94A3B8] text-[18px]">
         {activeGroup.category === 'buy_sell' && 'Sell something in '}
         {activeGroup.category === 'recruitment' && 'Post a job in '}
         {activeGroup.category === 'general' && 'Post something in '}

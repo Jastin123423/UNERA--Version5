@@ -7343,55 +7343,107 @@ const leaveGroup = useCallback(async (groupId: number) => {
   let media_types: string[] = [];
   let media_meta: any[] = [];
 
-  if (files) {
-    const fileArray = Array.isArray(files) ? files : (files ? [files] : []);
-    
-    if (fileArray.length > 0) {
-      try {
-        const uploadResults = await Promise.all(
-          fileArray.map(async (file) => {
-            if (file.type.startsWith('image/')) {
-              return await uploadGroupImageBundle(file);
-            }
-            if (file.type.startsWith('video/')) {
-              return await uploadGroupVideoBundle(file);
-            }
+  const fileArray = Array.isArray(files) ? files : (files ? [files] : []);
+  const firstFile = fileArray[0];
+  let previewUrl: string | undefined;
+  if (firstFile && firstFile.type.startsWith('image/')) {
+    try { previewUrl = URL.createObjectURL(firstFile); } catch (e) {}
+  }
+
+  const targetGroup = groups.find((g: any) => Number(g.id) === Number(groupId));
+  const groupName = targetGroup?.name ? `"${targetGroup.name}"` : 'group';
+
+  setPostUploadState({
+    isUploading: true,
+    progress: 15,
+    title: `Posting to ${groupName}…`,
+    secondaryStatus: fileArray.length > 0
+      ? (fileArray.length > 1 ? `Optimizing ${fileArray.length} photos...` : 'Preparing media attachment...')
+      : 'Publishing post to group...',
+    previewUrl,
+    isSuccess: false,
+  });
+
+  if (fileArray.length > 0) {
+    try {
+      let completedFiles = 0;
+      const uploadResults = await Promise.all(
+        fileArray.map(async (file) => {
+          let res;
+          if (file.type.startsWith('image/')) {
+            res = await uploadGroupImageBundle(file);
+          } else if (file.type.startsWith('video/')) {
+            res = await uploadGroupVideoBundle(file);
+          } else {
             throw new Error(`Unsupported file type: ${file.type}`);
-          })
-        );
-
-        media_meta = uploadResults.map((r) => {
-          if (r.kind === 'image') {
-            return {
-              thumb: r.thumb,
-              feed: r.feed,
-              full: r.feed, // full = feed
-              type: 'image',
-            };
           }
-          return {
-            thumb: r.thumb || '',
-            feed: '',
-            full: r.full,
-            type: 'video',
-          };
-        });
 
-        media_urls = uploadResults
-          .map((r) => (r.kind === 'image' ? r.feed : r.full))
-          .filter(Boolean);
-        
-        media_types = uploadResults.map((r) => r.type);
-        media_url = media_urls[0] || null;
-        media_type = media_types[0] || null;
-      } catch (error) {
-        console.error('Failed to upload files:', error);
-        throw new Error('Failed to upload files');
-      }
+          completedFiles++;
+          const pct = Math.min(85, 20 + Math.round((completedFiles / fileArray.length) * 65));
+          setPostUploadState((prev) => prev ? ({
+            ...prev,
+            progress: pct,
+            secondaryStatus: fileArray.length > 1
+              ? `Uploaded file ${completedFiles} of ${fileArray.length}...`
+              : 'Media uploaded. Publishing post...',
+          }) : null);
+
+          return res;
+        })
+      );
+
+      media_meta = uploadResults.map((r) => {
+        if (r.kind === 'image') {
+          return {
+            thumb: r.thumb,
+            feed: r.feed,
+            full: r.feed, // full = feed
+            type: 'image',
+          };
+        }
+        return {
+          thumb: r.thumb || '',
+          feed: '',
+          full: r.full,
+          type: 'video',
+        };
+      });
+
+      media_urls = uploadResults
+        .map((r) => (r.kind === 'image' ? r.feed : r.full))
+        .filter(Boolean);
+      
+      media_types = uploadResults.map((r) => r.type);
+      media_url = media_urls[0] || null;
+      media_type = media_types[0] || null;
+    } catch (error) {
+      console.error('Failed to upload files:', error);
+      setPostUploadState((prev) => prev ? ({
+        ...prev,
+        isUploading: false,
+        isSuccess: false,
+        progress: 0,
+        title: 'Upload failed',
+        secondaryStatus: (error as any)?.message || 'Failed to upload files',
+        error: (error as any)?.message,
+      }) : null);
+      setTimeout(() => {
+        setPostUploadState(null);
+        if (previewUrl) {
+          try { URL.revokeObjectURL(previewUrl); } catch (e) {}
+        }
+      }, 4000);
+      throw new Error('Failed to upload files');
     }
   }
 
   try {
+    setPostUploadState((prev) => prev ? ({
+      ...prev,
+      progress: 90,
+      secondaryStatus: 'Publishing post to group...',
+    }) : null);
+
     const payload: any = {
       group_id: Number(groupId),
       user_id: meId,
@@ -7438,13 +7490,44 @@ const leaveGroup = useCallback(async (groupId: number) => {
       method: "POST",
       body: JSON.stringify(payload),
     });
+
+    setPostUploadState((prev) => prev ? ({
+      ...prev,
+      isUploading: false,
+      isSuccess: true,
+      progress: 100,
+      title: 'Group post published!',
+      secondaryStatus: 'Your post is now visible in the group.',
+    }) : null);
+
+    setTimeout(() => {
+      setPostUploadState(null);
+      if (previewUrl) {
+        try { URL.revokeObjectURL(previewUrl); } catch (e) {}
+      }
+    }, 2800);
     
     return result;
   } catch (error) {
     console.error('Failed to create group post:', error);
+    setPostUploadState((prev) => prev ? ({
+      ...prev,
+      isUploading: false,
+      isSuccess: false,
+      progress: 0,
+      title: 'Upload failed',
+      secondaryStatus: (error as any)?.message || 'Could not publish group post.',
+      error: (error as any)?.message,
+    }) : null);
+    setTimeout(() => {
+      setPostUploadState(null);
+      if (previewUrl) {
+        try { URL.revokeObjectURL(previewUrl); } catch (e) {}
+      }
+    }, 4000);
     throw error;
   }
-}, [currentUser, requireAuth]);
+}, [currentUser, requireAuth, groups]);
 
  //=======CREATE  GROUP=======
 
@@ -10718,6 +10801,8 @@ return (
               currentUser={currentUser}
               groups={groups}
               users={users}
+              uploadState={postUploadState}
+              onDismissUpload={() => setPostUploadState(null)}
               onCreateGroup={createGroup}
               onJoinGroup={joinGroup}
               onLeaveGroup={leaveGroup}
