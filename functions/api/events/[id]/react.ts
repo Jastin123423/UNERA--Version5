@@ -23,19 +23,21 @@ const toNum = (v: any, fallback = 0) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
-const normalizeType = (v: any) => String(v || "like").toLowerCase();
+const normalizeType = (v: any) => String(v || "like").trim().toLowerCase();
 
-const ALLOWED = [
+const ALLOWED = new Set([
   "like","love","haha","wow","sad","angry",
   "fire","party","clap","star","thinking",
   "crying","heart_eyes","kiss","sunglasses",
-  "rocket","trophy","crown"
-];
+  "rocket","trophy","crown",
+]);
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }) => {
   try {
+    if (!env.DB) return json({ success: false, error: "DB binding missing" }, 500);
+
     const eventId = toNum((params as any)?.id, 0);
-    const body = await request.json().catch(() => ({}));
+    const body: any = await request.json().catch(() => ({}));
 
     const headerUserId = toNum(request.headers.get("x-user-id"), 0);
     const bodyUserId = toNum(body.user_id, 0);
@@ -43,90 +45,102 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
 
     const type = normalizeType(body.type);
 
-    if (!eventId) return json({ error: "Invalid event id" }, 400);
-    if (!userId) return json({ error: "user_id required" }, 400);
-    if (!ALLOWED.includes(type)) return json({ error: "Invalid reaction" }, 400);
+    if (!eventId) return json({ success: false, error: "Invalid event id" }, 400);
+    if (!userId)  return json({ success: false, error: "user_id required" }, 400);
+    if (!ALLOWED.has(type)) return json({ success: false, error: "Invalid reaction" }, 400);
 
-    // Ensure event exists
-    const event = await env.DB.prepare(
-      `SELECT id, user_id FROM events WHERE id=? LIMIT 1`
-    ).bind(eventId).first();
+    // ✅ creator_id (not user_id)
+    const event = await env.DB
+      .prepare(`SELECT id, creator_id FROM events WHERE id=? LIMIT 1`)
+      .bind(eventId)
+      .first<any>();
 
-    if (!event) return json({ error: "Event not found" }, 404);
+    if (!event) return json({ success: false, error: "Event not found" }, 404);
 
-    // Check existing
-    const existing = await env.DB.prepare(
-      `SELECT id, type FROM event_reactions WHERE event_id=? AND user_id=?`
-    ).bind(eventId, userId).first();
+    const existing = await env.DB
+      .prepare(`SELECT id, type FROM event_reactions WHERE event_id=? AND user_id=? LIMIT 1`)
+      .bind(eventId, userId)
+      .first<any>();
 
     let reacted = false;
     let finalType: string | null = null;
+    let action: "added" | "removed" | "changed" = "added";
 
-    if (existing?.id) {
+    if (existing) {
       const prev = normalizeType(existing.type);
 
       if (prev === type) {
-        // toggle OFF
-        await env.DB.prepare(
-          `DELETE FROM event_reactions WHERE event_id=? AND user_id=?`
-        ).bind(eventId, userId).run();
-
+        await env.DB
+          .prepare(`DELETE FROM event_reactions WHERE event_id=? AND user_id=?`)
+          .bind(eventId, userId)
+          .run();
         reacted = false;
         finalType = null;
+        action = "removed";
       } else {
-        // update
-        await env.DB.prepare(
-          `UPDATE event_reactions SET type=?, created_at=datetime('now') WHERE id=?`
-        ).bind(type, existing.id).run();
-
+        await env.DB
+          .prepare(`UPDATE event_reactions SET type=?, created_at=CURRENT_TIMESTAMP WHERE id=?`)
+          .bind(type, existing.id)
+          .run();
         reacted = true;
         finalType = type;
+        action = "changed";
       }
     } else {
-      // insert
-      await env.DB.prepare(
-        `INSERT INTO event_reactions (event_id, user_id, type) VALUES (?, ?, ?)`
-      ).bind(eventId, userId, type).run();
-
+      await env.DB
+        .prepare(`INSERT INTO event_reactions (event_id, user_id, type) VALUES (?, ?, ?)`)
+        .bind(eventId, userId, type)
+        .run();
       reacted = true;
       finalType = type;
-
-      // 🔔 NOTIFICATION
-      await createNotification(
-        env,
-        event.user_id,
-        userId,
-        "reaction",
-        "event",
-        eventId,
-        `event:${eventId}:reaction`,
-        "reacted to your event"
-      );
+      action = "added";
     }
 
-    // Count
-    const countRow = await env.DB.prepare(
-      `SELECT COUNT(*) c FROM event_reactions WHERE event_id=?`
-    ).bind(eventId).first();
+    // 🔔 Notify on add/change, never self
+    if (action !== "removed" && finalType) {
+      const ownerId = toNum(event.creator_id, 0);
+      if (ownerId && ownerId !== userId) {
+        try {
+          await createNotification(
+            env,
+            ownerId,
+            userId,
+            "reaction",
+            "event",
+            eventId,
+            `event:${eventId}:reaction`,
+            "reacted to your event"
+          );
+        } catch (_) {}
+      }
+    }
 
-    // Breakdown
-    const { results } = await env.DB.prepare(`
-      SELECT type, COUNT(*) as count
-      FROM event_reactions
-      WHERE event_id=?
-      GROUP BY type
-      ORDER BY count DESC
-    `).bind(eventId).all();
+    const countRow = await env.DB
+      .prepare(`SELECT COUNT(*) AS c FROM event_reactions WHERE event_id=?`)
+      .bind(eventId)
+      .first<{ c: number }>();
+
+    const { results } = await env.DB
+      .prepare(
+        `SELECT type, COUNT(*) AS count
+         FROM event_reactions
+         WHERE event_id=?
+         GROUP BY type
+         ORDER BY count DESC`
+      )
+      .bind(eventId)
+      .all();
 
     return json({
       success: true,
+      action,
       reacted,
       type: finalType,
-      reactions_count: Number(countRow?.c || 0),
-      reactions_breakdown: results || []
+      my_reaction: finalType,
+      reactions_count: toNum(countRow?.c, 0),
+      reactions_breakdown: results || [],
     });
-
   } catch (err: any) {
-    return json({ error: err?.message || "Server error" }, 500);
+    return json({ success: false, error: err?.message || "Server error" }, 500);
   }
 };
