@@ -39,6 +39,9 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env, params })
       toNum(request.headers.get("x-user-id"), 0) ||
       toNum(url.searchParams.get("viewerId"), 0);
 
+    const limit = Math.min(Math.max(toNum(url.searchParams.get("limit"), 200), 1), 500);
+    const offset = Math.max(toNum(url.searchParams.get("offset"), 0), 0);
+
     if (!songId) {
       return json({ success: false, error: "Invalid song id" }, 400);
     }
@@ -97,14 +100,17 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env, params })
       WHERE sc.song_id = ?
         AND COALESCE(sc.is_deleted, 0) = 0
       ORDER BY sc.created_at ASC, sc.id ASC
+      LIMIT ? OFFSET ?
       `
     )
-      .bind(viewerId, viewerId, songId)
+      .bind(viewerId, viewerId, songId, limit, offset)
       .all();
 
     return json({
       success: true,
       comments: Array.isArray(results) ? results : [],
+      limit,
+      offset,
     });
   } catch (err: any) {
     return json(
