@@ -15,92 +15,118 @@ const json = (data: any, status = 200) =>
     headers: { ...cors, "Content-Type": "application/json", "Cache-Control": "no-store" },
   });
 
+export const onRequestOptions: PagesFunction = async () =>
+  new Response(null, { status: 204, headers: cors });
+
 const toNum = (v: any, fallback = 0) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
 };
-
-export const onRequestOptions: PagesFunction = async () =>
-  new Response(null, { status: 204, headers: cors });
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }) => {
   try {
     if (!env.DB) return json({ success: false, error: "DB binding missing (DB)" }, 500);
 
     const eventId = toNum((params as any)?.id, 0);
-    if (!eventId) return json({ success: false, error: "Invalid event id" }, 400);
+    const body: any = await request.json().catch(() => ({}));
 
-    const body = await request.json().catch(() => ({} as any));
     const headerUserId = toNum(request.headers.get("x-user-id"), 0);
     const bodyUserId = toNum(body.user_id, 0);
     const userId = headerUserId || bodyUserId || 0;
 
-    if (!userId) return json({ success: false, error: "user_id missing" }, 400);
+    // Also accept event_id from body as fallback if route param missing
+    const eventIdFromBody = toNum(body.event_id, 0);
+    const finalEventId = eventId || eventIdFromBody;
 
-    const action = String(body.action ?? "attend").trim().toLowerCase(); // attend | remove
+    const rawAction = String(body.action ?? "add").trim().toLowerCase();
+    const isAdd = ["add", "attend", "going"].includes(rawAction);
+    const isRemove = ["remove", "cancel", "not_going"].includes(rawAction);
 
-    const event = await env.DB.prepare(
-      `SELECT id, user_id
-       FROM events
-       WHERE id = ?
-       LIMIT 1`
-    ).bind(eventId).first();
-
-    if (!event) {
-      return json({ success: false, error: "Event not found" }, 404);
+    if (!finalEventId) return json({ success: false, error: "event_id missing" }, 400);
+    if (!userId)       return json({ success: false, error: "user_id missing" }, 400);
+    if (!isAdd && !isRemove) {
+      return json({ success: false, error: "Invalid action" }, 400);
     }
 
-    const eventOwnerId = toNum((event as any)?.user_id, 0);
+    // ✅ events table uses creator_id (NOT user_id)
+    const event = await env.DB
+      .prepare(`SELECT id, creator_id FROM events WHERE id = ? LIMIT 1`)
+      .bind(finalEventId)
+      .first<any>();
 
-    if (action === "remove") {
-      await env.DB.prepare(
-        `DELETE FROM event_attendees WHERE event_id=? AND user_id=?`
-      ).bind(eventId, userId).run();
+    if (!event) return json({ success: false, error: "Event not found" }, 404);
+
+    const eventOwnerId = toNum(event.creator_id, 0);
+
+    if (isAdd) {
+      const already = await env.DB
+        .prepare(`SELECT 1 AS ok FROM event_attendees WHERE event_id=? AND user_id=? LIMIT 1`)
+        .bind(finalEventId, userId)
+        .first<{ ok: number }>();
+
+      if (!already) {
+        await env.DB
+          .prepare(`INSERT INTO event_attendees (event_id, user_id) VALUES (?, ?)`)
+          .bind(finalEventId, userId)
+          .run();
+
+        // mutual exclusion: going removes interested
+        await env.DB
+          .prepare(`DELETE FROM event_interested WHERE event_id=? AND user_id=?`)
+          .bind(finalEventId, userId)
+          .run();
+
+        // notify only on first-time going, never self
+        if (eventOwnerId && eventOwnerId !== userId) {
+          try {
+            await createNotification(
+              env,
+              eventOwnerId,
+              userId,
+              "going",
+              "event",
+              finalEventId,
+              `event:${finalEventId}:going`,
+              "is going to your event"
+            );
+          } catch (_) {}
+        }
+      }
     } else {
-      await env.DB.prepare(
-        `INSERT OR IGNORE INTO event_attendees (event_id, user_id) VALUES (?, ?)`
-      ).bind(eventId, userId).run();
-
-      await env.DB.prepare(
-        `DELETE FROM event_interested WHERE event_id=? AND user_id=?`
-      ).bind(eventId, userId).run();
-
-      await createNotification(
-        env,
-        eventOwnerId,
-        userId,
-        "event",
-        "event",
-        eventId,
-        `event:${eventId}:going`,
-        "is going to your event"
-      );
+      await env.DB
+        .prepare(`DELETE FROM event_attendees WHERE event_id=? AND user_id=?`)
+        .bind(finalEventId, userId)
+        .run();
     }
 
-    const attending = await env.DB.prepare(
-      `SELECT COUNT(*) as c FROM event_attendees WHERE event_id=?`
-    ).bind(eventId).first<any>();
+    const attending = await env.DB
+      .prepare(`SELECT COUNT(*) AS c FROM event_attendees WHERE event_id=?`)
+      .bind(finalEventId)
+      .first<{ c: number }>();
 
-    const interested = await env.DB.prepare(
-      `SELECT COUNT(*) as c FROM event_interested WHERE event_id=?`
-    ).bind(eventId).first<any>();
+    const interested = await env.DB
+      .prepare(`SELECT COUNT(*) AS c FROM event_interested WHERE event_id=?`)
+      .bind(finalEventId)
+      .first<{ c: number }>();
 
-    const amGoing = await env.DB.prepare(
-      `SELECT 1 as ok FROM event_attendees WHERE event_id=? AND user_id=? LIMIT 1`
-    ).bind(eventId, userId).first<any>();
+    const myGoing = await env.DB
+      .prepare(`SELECT 1 AS ok FROM event_attendees WHERE event_id=? AND user_id=? LIMIT 1`)
+      .bind(finalEventId, userId)
+      .first();
 
-    const amInterested = await env.DB.prepare(
-      `SELECT 1 as ok FROM event_interested WHERE event_id=? AND user_id=? LIMIT 1`
-    ).bind(eventId, userId).first<any>();
+    const myInterested = await env.DB
+      .prepare(`SELECT 1 AS ok FROM event_interested WHERE event_id=? AND user_id=? LIMIT 1`)
+      .bind(finalEventId, userId)
+      .first();
 
-    const my_rsvp_status = amGoing ? "going" : (amInterested ? "interested" : "");
+    const my_status = myGoing ? "going" : myInterested ? "interested" : "";
 
     return json({
       success: true,
-      event_id: eventId,
-      my_rsvp_status,
+      event_id: finalEventId,
       attending_count: Number(attending?.c ?? 0),
       interested_count: Number(interested?.c ?? 0),
+      my_status,
     });
   } catch (err: any) {
     return json({ success: false, error: err?.message || "Failed to attend" }, 500);
