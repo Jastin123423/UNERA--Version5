@@ -62,7 +62,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
     ).bind(commentId).first();
 
     if (!comment) {
-      return json({ success: false, error: "Discuss not found" }, 404);
+      return json({ success: false, error: "Comment not found" }, 404);
     }
 
     const existing = await env.DB.prepare(
@@ -91,16 +91,18 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
 
       const commentOwnerId = toNum((comment as any)?.user_id, 0);
 
-      await createNotification(
-        env,
-        commentOwnerId,
-        userId,
-        "react",
-        "comment",
-        commentId,
-        `song_comment:${commentId}:like`,
-        "reacted to your Discuss"
-      );
+      if (commentOwnerId && commentOwnerId !== userId) {
+        await createNotification(
+          env,
+          commentOwnerId,
+          userId,
+          "react",
+          "comment",
+          commentId,
+          `song_comment:${commentId}:like`,
+          "liked your comment"
+        );
+      }
     }
 
     const countRow = await env.DB.prepare(
@@ -119,7 +121,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
     });
   } catch (err: any) {
     return json(
-      { success: false, error: err?.message || "Failed to like song Discuss" },
+      { success: false, error: err?.message || "Failed to like comment" },
       500
     );
   }
