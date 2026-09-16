@@ -61,7 +61,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
     }
 
     if (text && text.length > 2000) {
-      return json({ success: false, error: "Discuss is too long" }, 400);
+      return json({ success: false, error: "Comment is too long" }, 400);
     }
 
     const song = await env.DB.prepare(
@@ -95,12 +95,12 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
       ).bind(parentCommentId).first();
 
       if (!parentComment) {
-        return json({ success: false, error: "Parent Discuss not found" }, 404);
+        return json({ success: false, error: "Parent comment not found" }, 404);
       }
 
       if (toNum((parentComment as any).song_id, 0) !== songId) {
         return json(
-          { success: false, error: "Parent Discuss does not belong to this song" },
+          { success: false, error: "Parent comment does not belong to this song" },
           400
         );
       }
@@ -118,7 +118,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
       VALUES (?, ?, ?, ?, ?)
       `
     )
-      .bind(songId, userId, parentCommentId, text || null, image_url)
+      .bind(songId, userId, parentCommentId, text || "", image_url)
       .run();
 
     const commentId = toNum(ins.meta?.last_row_id, 0);
@@ -150,39 +150,47 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
 
     const songOwnerId = toNum((song as any)?.user_id, 0);
 
+    // ---- Notify (with self-guard) ----
     if (parentCommentId && parentComment) {
       const parentOwnerId = toNum((parentComment as any)?.user_id, 0);
 
-      await createNotification(
-        env,
-        parentOwnerId,
-        userId,
-        "reply",
-        "comment",
-        parentCommentId,
-        `song_comment:${parentCommentId}:reply`,
-        "replied in Discuss"
-      );
+      if (parentOwnerId && parentOwnerId !== userId) {
+        await createNotification(
+          env,
+          parentOwnerId,
+          userId,
+          "reply",
+          "comment",
+          parentCommentId,
+          `song_comment:${parentCommentId}:reply`,
+          "replied to your comment"
+        );
+      }
     } else {
-      await createNotification(
-        env,
-        songOwnerId,
-        userId,
-        "discuss",
-        "song",
-        songId,
-        `song:${songId}:discuss`,
-        "discussed your song"
-      );
+      if (songOwnerId && songOwnerId !== userId) {
+        await createNotification(
+          env,
+          songOwnerId,
+          userId,
+          "discuss",
+          "song",
+          songId,
+          `song:${songId}:discuss`,
+          "commented on your song"
+        );
+      }
     }
 
-    return json({
-      success: true,
-      comment: comment ?? null,
-    }, 201);
+    return json(
+      {
+        success: true,
+        comment: comment ?? null,
+      },
+      201
+    );
   } catch (err: any) {
     return json(
-      { success: false, error: err?.message || "Failed to add song Discuss" },
+      { success: false, error: err?.message || "Failed to add comment" },
       500
     );
   }
