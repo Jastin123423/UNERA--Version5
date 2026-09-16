@@ -64,8 +64,9 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
       return json({ success: false, error: "Comment is too long" }, 400);
     }
 
+    // ✅ FIX: use uploader_id (matches songs schema)
     const song = await env.DB.prepare(
-      `SELECT id, user_id
+      `SELECT id, uploader_id
        FROM songs
        WHERE id = ?
        LIMIT 1`
@@ -148,9 +149,9 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
       .bind(commentId)
       .first();
 
-    const songOwnerId = toNum((song as any)?.user_id, 0);
+    // ✅ FIX: read uploader_id
+    const songOwnerId = toNum((song as any)?.uploader_id, 0);
 
-    // ---- Notify (with self-guard) ----
     if (parentCommentId && parentComment) {
       const parentOwnerId = toNum((parentComment as any)?.user_id, 0);
 
