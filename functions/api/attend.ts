@@ -27,83 +27,102 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   try {
     if (!env.DB) return json({ success: false, error: "DB binding missing (DB)" }, 500);
 
-    const body = await request.json().catch(() => ({} as any));
+    const body: any = await request.json().catch(() => ({}));
 
     const headerUserId = toNum(request.headers.get("x-user-id"), 0);
     const bodyUserId = toNum(body.user_id, 0);
     const userId = headerUserId || bodyUserId || 0;
 
     const eventId = toNum(body.event_id, 0);
-    const action = String(body.action ?? "add").trim().toLowerCase(); // add | remove
+    const rawAction = String(body.action ?? "add").trim().toLowerCase();
+
+    const isAdd = ["add", "attend", "going"].includes(rawAction);
+    const isRemove = ["remove", "cancel", "not_going"].includes(rawAction);
 
     if (!eventId) return json({ success: false, error: "event_id missing" }, 400);
-    if (!userId) return json({ success: false, error: "user_id missing" }, 400);
-
-    const event = await env.DB.prepare(
-      `SELECT id, user_id
-       FROM events
-       WHERE id = ?
-       LIMIT 1`
-    ).bind(eventId).first();
-
-    if (!event) {
-      return json({ success: false, error: "Event not found" }, 404);
+    if (!userId)  return json({ success: false, error: "user_id missing" }, 400);
+    if (!isAdd && !isRemove) {
+      return json({ success: false, error: "Invalid action" }, 400);
     }
 
-    const eventOwnerId = toNum((event as any)?.user_id, 0);
+    // ✅ creator_id
+    const event = await env.DB
+      .prepare(`SELECT id, creator_id FROM events WHERE id = ? LIMIT 1`)
+      .bind(eventId)
+      .first<any>();
 
-    if (action === "add") {
-      // going => insert (idempotent)
-      await env.DB.prepare(
-        `INSERT OR IGNORE INTO event_attendees (event_id, user_id) VALUES (?, ?)`
-      ).bind(eventId, userId).run();
+    if (!event) return json({ success: false, error: "Event not found" }, 404);
 
-      // if going, remove interested
-      await env.DB.prepare(
-        `DELETE FROM event_interested WHERE event_id=? AND user_id=?`
-      ).bind(eventId, userId).run();
+    const eventOwnerId = toNum(event.creator_id, 0);
 
-      await createNotification(
-        env,
-        eventOwnerId,
-        userId,
-        "event",
-        "event",
-        eventId,
-        `event:${eventId}:going`,
-        "is going to your event"
-      );
+    if (isAdd) {
+      const already = await env.DB
+        .prepare(`SELECT 1 AS ok FROM event_attendees WHERE event_id=? AND user_id=? LIMIT 1`)
+        .bind(eventId, userId)
+        .first<{ ok: number }>();
+
+      if (!already) {
+        await env.DB
+          .prepare(`INSERT INTO event_attendees (event_id, user_id) VALUES (?, ?)`)
+          .bind(eventId, userId)
+          .run();
+
+        // mutual exclusion: going removes interested
+        await env.DB
+          .prepare(`DELETE FROM event_interested WHERE event_id=? AND user_id=?`)
+          .bind(eventId, userId)
+          .run();
+
+        // notify only on first-time going, never self
+        if (eventOwnerId && eventOwnerId !== userId) {
+          try {
+            await createNotification(
+              env,
+              eventOwnerId,
+              userId,
+              "going",
+              "event",
+              eventId,
+              `event:${eventId}:going`,
+              "is going to your event"
+            );
+          } catch (_) {}
+        }
+      }
     } else {
-      // remove going
-      await env.DB.prepare(
-        `DELETE FROM event_attendees WHERE event_id=? AND user_id=?`
-      ).bind(eventId, userId).run();
+      await env.DB
+        .prepare(`DELETE FROM event_attendees WHERE event_id=? AND user_id=?`)
+        .bind(eventId, userId)
+        .run();
     }
 
-    // return counts + my status
-    const attending = await env.DB.prepare(
-      `SELECT COUNT(*) AS c FROM event_attendees WHERE event_id=?`
-    ).bind(eventId).first();
+    const attending = await env.DB
+      .prepare(`SELECT COUNT(*) AS c FROM event_attendees WHERE event_id=?`)
+      .bind(eventId)
+      .first<{ c: number }>();
 
-    const interested = await env.DB.prepare(
-      `SELECT COUNT(*) AS c FROM event_interested WHERE event_id=?`
-    ).bind(eventId).first();
+    const interested = await env.DB
+      .prepare(`SELECT COUNT(*) AS c FROM event_interested WHERE event_id=?`)
+      .bind(eventId)
+      .first<{ c: number }>();
 
-    const myGoing = await env.DB.prepare(
-      `SELECT 1 AS ok FROM event_attendees WHERE event_id=? AND user_id=? LIMIT 1`
-    ).bind(eventId, userId).first();
+    const myGoing = await env.DB
+      .prepare(`SELECT 1 AS ok FROM event_attendees WHERE event_id=? AND user_id=? LIMIT 1`)
+      .bind(eventId, userId)
+      .first();
 
-    const myInterested = await env.DB.prepare(
-      `SELECT 1 AS ok FROM event_interested WHERE event_id=? AND user_id=? LIMIT 1`
-    ).bind(eventId, userId).first();
+    const myInterested = await env.DB
+      .prepare(`SELECT 1 AS ok FROM event_interested WHERE event_id=? AND user_id=? LIMIT 1`)
+      .bind(eventId, userId)
+      .first();
 
     const my_status = myGoing ? "going" : myInterested ? "interested" : "";
 
     return json({
       success: true,
       event_id: eventId,
-      attending_count: Number((attending as any)?.c ?? 0),
-      interested_count: Number((interested as any)?.c ?? 0),
+      attending_count: Number(attending?.c ?? 0),
+      interested_count: Number(interested?.c ?? 0),
       my_status,
     });
   } catch (err: any) {
