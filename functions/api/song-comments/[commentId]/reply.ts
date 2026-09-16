@@ -1,5 +1,3 @@
-
-
 import type { PagesFunction } from "@cloudflare/workers-types";
 import { createNotification } from "../../../utils/createNotification";
 
@@ -70,9 +68,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
         id,
         song_id,
         user_id,
-        parent_comment_id,
-        text,
-        image_url
+        parent_comment_id
       FROM song_comments
       WHERE id = ?
         AND COALESCE(is_deleted, 0) = 0
@@ -81,12 +77,12 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
     ).bind(commentId).first();
 
     if (!parentComment) {
-      return json({ success: false, error: "Parent Discuss not found" }, 404);
+      return json({ success: false, error: "Parent comment not found" }, 404);
     }
 
     const songId = toNum((parentComment as any)?.song_id, 0);
     if (!songId) {
-      return json({ success: false, error: "Parent Discuss has no song" }, 400);
+      return json({ success: false, error: "Parent comment has no song" }, 400);
     }
 
     const song = await env.DB.prepare(
@@ -117,7 +113,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
       VALUES (?, ?, ?, ?, ?)
       `
     )
-      .bind(songId, userId, commentId, text || null, image_url)
+      .bind(songId, userId, commentId, text || "", image_url)
       .run();
 
     const replyId = toNum(ins.meta?.last_row_id, 0);
@@ -149,24 +145,29 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
 
     const parentOwnerId = toNum((parentComment as any)?.user_id, 0);
 
-    await createNotification(
-      env,
-      parentOwnerId,
-      userId,
-      "reply",
-      "comment",
-      commentId,
-      `song_comment:${commentId}:reply`,
-      "replied in Discuss"
-    );
+    if (parentOwnerId && parentOwnerId !== userId) {
+      await createNotification(
+        env,
+        parentOwnerId,
+        userId,
+        "reply",
+        "comment",
+        commentId,
+        `song_comment:${commentId}:reply`,
+        "replied to your comment"
+      );
+    }
 
-    return json({
-      success: true,
-      reply: reply ?? null,
-    }, 201);
+    return json(
+      {
+        success: true,
+        reply: reply ?? null,
+      },
+      201
+    );
   } catch (err: any) {
     return json(
-      { success: false, error: err?.message || "Failed to reply to song Discuss" },
+      { success: false, error: err?.message || "Failed to reply to comment" },
       500
     );
   }
