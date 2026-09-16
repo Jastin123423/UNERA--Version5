@@ -1,5 +1,5 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
-import { createNotification } from "../../utils/createNotification";
+import { createNotification } from "../../../utils/createNotification";
 
 type Env = { DB: D1Database };
 
@@ -30,11 +30,14 @@ const toNum = (v: any, fallback = 0) => {
 const toText = (v: any, fallback = "") =>
   typeof v === "string" ? v.trim() : fallback;
 
-export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
+export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }) => {
   try {
     if (!env.DB) {
       return json({ success: false, error: "DB binding missing (DB)" }, 500);
     }
+
+    // ✅ song_id comes from the URL: /api/songs/:id/share
+    const songId = toNum((params as any)?.id, 0);
 
     const body = await request.json().catch(() => ({} as any));
 
@@ -42,22 +45,19 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     const bodyUserId = toNum(body.user_id, 0);
     const userId = headerUserId || bodyUserId || 0;
 
-    const songId = toNum(body.song_id, 0);
     const destination = toText(body.destination, "feed").toLowerCase() || "feed";
     const itemType = toText(body.item_type, "music").toLowerCase() || "music";
     const message = toText(body.message) || null;
 
-    // NOTE: shared_at is NOT accepted from the client — DB sets CURRENT_TIMESTAMP.
-
     if (!songId) {
-      return json({ success: false, error: "song_id missing" }, 400);
+      return json({ success: false, error: "Invalid song id" }, 400);
     }
 
     if (!userId) {
       return json({ success: false, error: "user_id missing" }, 400);
     }
 
-    // ✅ FIX: use uploader_id (matches songs schema)
+    // ✅ songs uses uploader_id
     const song = await env.DB.prepare(
       `SELECT id, uploader_id
        FROM songs
@@ -106,7 +106,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       .bind(shareId)
       .first();
 
-    // ✅ Self-notify guard
+    // Self-notify guard
     if (songOwnerId && songOwnerId !== userId) {
       await createNotification(
         env,
