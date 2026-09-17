@@ -1,0 +1,4 @@
+[[d1_databases]]
+binding = "DB"
+database_name = "feathered"
+database_id = "9fc679a8-c734-4322-a205-ae91a5a318dd"   # ← the UUID from above
