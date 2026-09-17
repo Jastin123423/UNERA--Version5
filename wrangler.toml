@@ -1,4 +1,25 @@
+name = "feathered"
+compatibility_date = "2024-01-01"
+pages_build_output_dir = "dist"
+
+# ─────────────────────────────────────────────
+# D1 Database
+# ─────────────────────────────────────────────
 [[d1_databases]]
-binding = "DB"
+binding = "DT"
 database_name = "feathered"
-database_id = "9fc679a8-c734-4322-a205-ae91a5a318dd"   # ← the UUID from above
+database_id = "9fc679a8-c734-4322-a205-ae91a5a318dd"
+
+# ─────────────────────────────────────────────
+# R2 Bucket (media storage)
+# ─────────────────────────────────────────────
+[[r2_buckets]]
+binding = "MEDIA_BUCKET"
+bucket_name = "feathered"
+
+# ─────────────────────────────────────────────
+# Environment variables
+# ─────────────────────────────────────────────
+[vars]
+JWT_SECRET = "feathered_super_secret_2026_change_this_to_long_random_string"
+FIREBASE_PROJECT_ID = "feathered-social"
