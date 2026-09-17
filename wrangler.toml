@@ -17,9 +17,4 @@ database_id = "9fc679a8-c734-4322-a205-ae91a5a318dd"
 binding = "MEDIA_BUCKET"
 bucket_name = "feathered"
 
-# ─────────────────────────────────────────────
-# Environment variables
-# ─────────────────────────────────────────────
-[vars]
-JWT_SECRET = "feathered_super_secret_2026_change_this_to_long_random_string"
-FIREBASE_PROJECT_ID = "feathered-social"
+
