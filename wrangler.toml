@@ -9,8 +9,8 @@ FIREBASE_PROJECT_ID = "unera-50aae"
 [[d1_databases]]
 binding = "DB"
 database_name = "unera3"
-database_id = "9fc679a8-c734-4322-a205-ae91a5a318dd"
+database_id = ""
 
 [[r2_buckets]]
 binding = "R2"
-bucket_name = "unera3"
+bucket_name = "feathered"
