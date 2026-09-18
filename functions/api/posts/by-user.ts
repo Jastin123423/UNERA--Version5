@@ -260,8 +260,6 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
 
     const perType = clamp(Math.ceil((limit + 1) * 1.5), 10, 80);
 
-    const cursorWhere = cursor ? `AND created_at < ?` : "";
-
     const qPosts = `
       SELECT
         'post' AS source,
@@ -273,7 +271,6 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
         p.id AS post_id,
         NULL AS reel_id,
         NULL AS song_id2,
-        NULL AS podcast_id,
         NULL AS event_id,
         NULL AS group_post_id,
         NULL AS product_id2,
@@ -394,12 +391,6 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
         NULL AS song_likes_count,
         NULL AS song_plays_count,
 
-        NULL AS podcast_title,
-        NULL AS podcast_description,
-        NULL AS podcast_audio_url,
-        NULL AS podcast_cover_url,
-        NULL AS podcast_plays_count,
-
         NULL AS type,
         NULL AS post_type,
         NULL AS kind,
@@ -446,7 +437,6 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
         NULL AS post_id,
         NULL AS reel_id,
         s.id AS song_id2,
-        NULL AS podcast_id,
         NULL AS event_id,
         NULL AS group_post_id,
         NULL AS product_id2,
@@ -522,12 +512,6 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
           (SELECT COUNT(*) FROM song_plays sp WHERE sp.song_id = s.id)
         ) AS song_plays_count,
 
-        NULL AS podcast_title,
-        NULL AS podcast_description,
-        NULL AS podcast_audio_url,
-        NULL AS podcast_cover_url,
-        NULL AS podcast_plays_count,
-
         NULL AS type,
         NULL AS post_type,
         NULL AS kind,
@@ -545,106 +529,6 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       LIMIT ?
     `;
 
-    const qPodcasts = `
-      SELECT
-        'podcast' AS source,
-        'podcast' AS item_type,
-        pc.id AS id,
-        ('podcast:' || CAST(pc.id AS TEXT)) AS feed_key,
-        pc.created_at AS created_at,
-
-        NULL AS post_id,
-        NULL AS reel_id,
-        NULL AS song_id2,
-        pc.id AS podcast_id,
-        NULL AS event_id,
-        NULL AS group_post_id,
-        NULL AS product_id2,
-
-        pc.creator_id AS user_id,
-        COALESCE(NULLIF(TRIM(u.username), ''), 'user') AS username,
-        COALESCE(NULLIF(TRIM(u.name), ''), NULLIF(TRIM(u.username), ''), 'User') AS name,
-
-        CASE
-          WHEN u.profile_image_url LIKE 'data:%' THEN NULL
-          WHEN length(u.profile_image_url) > 300 THEN NULL
-          ELSE u.profile_image_url
-        END AS profile_image_url,
-
-        COALESCE(u.is_verified, 0) AS is_verified,
-        COALESCE(u.role, 'user') AS role,
-
-        COALESCE(pc.title,'Podcast') AS content,
-        'public' AS visibility,
-        0 AS views,
-        0 AS shares,
-
-        pc.audio_url AS media_url,
-        'audio/mpeg' AS media_type,
-
-        CASE
-          WHEN pc.cover_url IS NOT NULL AND pc.cover_url != ''
-          THEN json_array(pc.cover_url)
-          ELSE NULL
-        END AS media_urls,
-
-        CASE
-          WHEN pc.cover_url IS NOT NULL AND pc.cover_url != ''
-          THEN json_array('image')
-          ELSE NULL
-        END AS media_types,
-
-        NULL AS media_meta,
-        0 AS comments_count,
-        0 AS reactions_count,
-        NULL AS my_reaction,
-
-        NULL AS reactor_name,
-        NULL AS reactions_preview,
-        NULL AS reactions_by_type,
-
-        NULL AS video_url,
-        NULL AS caption,
-        NULL AS song_name,
-        pc.audio_url AS audio_url,
-        0 AS audio_start,
-        0 AS audio_end,
-        NULL AS location,
-        NULL AS sound_key,
-        NULL AS sound_id,
-
-        NULL AS song_title,
-        NULL AS song_artist_name,
-        NULL AS song_album_name,
-        NULL AS song_cover_image_url,
-        NULL AS song_duration_seconds,
-        NULL AS song_genre,
-        NULL AS song_likes_count,
-        NULL AS song_plays_count,
-
-        pc.title AS podcast_title,
-        pc.description AS podcast_description,
-        pc.audio_url AS podcast_audio_url,
-        pc.cover_url AS podcast_cover_url,
-        COALESCE(pc.plays_count, 0) AS podcast_plays_count,
-
-        NULL AS type,
-        NULL AS post_type,
-        NULL AS kind,
-        NULL AS meta,
-
-        NULL AS group_id,
-        NULL AS group_name,
-        NULL AS group_image
-
-      FROM podcasts pc
-      LEFT JOIN users u ON u.id = pc.creator_id
-      WHERE pc.creator_id = ?
-      ${cursor ? `AND pc.created_at < ?` : ""}
-      ORDER BY pc.created_at DESC
-      LIMIT ?
-    `;
-
     const qProducts = `
       SELECT
         'product' AS source,
@@ -656,7 +540,6 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
         NULL AS post_id,
         NULL AS reel_id,
         NULL AS song_id2,
-        NULL AS podcast_id,
         NULL AS event_id,
         NULL AS group_post_id,
         pr.id AS product_id2,
@@ -712,12 +595,6 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
         NULL AS song_likes_count,
         NULL AS song_plays_count,
 
-        NULL AS podcast_title,
-        NULL AS podcast_description,
-        NULL AS podcast_audio_url,
-        NULL AS podcast_cover_url,
-        NULL AS podcast_plays_count,
-
         'marketplace' AS type,
         'product' AS post_type,
         'product' AS kind,
@@ -742,17 +619,15 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
 
     const bindCursor = (base: any[]) => (cursor ? [...base, cursor, perType] : [...base, perType]);
 
-    const [postsRes, songsRes, podcastsRes, productsRes] = await Promise.all([
+    const [postsRes, songsRes, productsRes] = await Promise.all([
       env.DB.prepare(qPosts).bind(...bindCursor([viewerId || 0, userId])).all(),
       env.DB.prepare(qSongs).bind(...bindCursor([viewerId || 0, userId])).all(),
-      env.DB.prepare(qPodcasts).bind(...bindCursor([userId])).all(),
       env.DB.prepare(qProducts).bind(...bindCursor([userId])).all(),
     ]);
 
     const items = [
       ...(Array.isArray(postsRes.results) ? postsRes.results : []),
       ...(Array.isArray(songsRes.results) ? songsRes.results : []),
-      ...(Array.isArray(podcastsRes.results) ? podcastsRes.results : []),
       ...(Array.isArray(productsRes.results) ? productsRes.results : []),
     ];
 
@@ -802,6 +677,3 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     return json({ success: false, error: e?.message || String(e) }, 500);
   }
 };
-
-          
-                  
