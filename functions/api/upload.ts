@@ -8,7 +8,7 @@ const cors = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, x-user-id",
 };
 
-const PUBLIC_BASE = "https://media.unera.social";
+const PUBLIC_BASE = "https://media.featuredsocial.site";
 const LONG_CACHE_CONTROL = "public, max-age=31536000, immutable";
 
 export const onRequestOptions: PagesFunction = async () =>
