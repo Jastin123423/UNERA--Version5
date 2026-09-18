@@ -8,7 +8,7 @@ const cors = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, x-user-id",
 };
 
-const PUBLIC_BASE = "https://media.featuredsocial.site";
+const PUBLIC_BASE = "https://media.featheredsocial.site";
 const LONG_CACHE_CONTROL = "public, max-age=31536000, immutable";
 
 export const onRequestOptions: PagesFunction = async () =>
@@ -419,9 +419,6 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       const thumbnailFile = form.get("thumbnail");
       const audioFile = form.get("audio");
 
-      // Bundle mode: supports custom compressed flows from frontend.
-      // For image bundle callers, you can send only thumbnail + feed.
-      // For video bundle callers, you can send thumbnail + original.
       if (
         originalFile instanceof File ||
         feedFile instanceof File ||
@@ -448,7 +445,6 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
           uploaded.audio = await uploadBundlePart(env, audioFile, baseFolder, "audio");
         }
 
-        // Legacy/optional support only when caller truly sends original.
         if (originalFile instanceof File) {
           uploaded.original = await uploadBundlePart(env, originalFile, baseFolder, "original");
         }
