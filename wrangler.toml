@@ -12,5 +12,5 @@ database_name = "feathered"
 database_id = "5adc2d13-8d38-4982-a404-daa104a7a8a9"
 
 [[r2_buckets]]
-binding = "MEDIA_BUCKET"
+binding = "R2"
 bucket_name = "feathered"
