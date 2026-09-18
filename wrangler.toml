@@ -3,9 +3,6 @@ name = "feathered"
 compatibility_date = "2026-01-14"
 pages_build_output_dir = "dist"
 
-[vars]
-JWT_SECRET = "unera_super_secret_2026_change_this_to_long_random_string"
-FIREBASE_PROJECT_ID = "unera-50aae"
 
 [[d1_databases]]
 binding = "DT"
