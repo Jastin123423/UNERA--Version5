@@ -1,14 +1,3 @@
-
 name = "feathered"
-compatibility_date = "2026-01-14"
+compatibility_date = "2024-01-01"
 pages_build_output_dir = "dist"
-
-
-[[d1_databases]]
-binding = "DT"
-database_name = "feathered"
-database_id = "9fc679a8-c734-4322-a205-ae91a5a318dd"
-
-[[r2_buckets]]
-binding = "MEDIA_BUCKET"
-bucket_name = "feathered"
