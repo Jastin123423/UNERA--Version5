@@ -7,7 +7,7 @@ pages_build_output_dir = "dist"
 [[d1_databases]]
 binding = "DT"
 database_name = "feathered"
-database_id = "78ab2b7fc1c115c69e62ef876c825f44"
+database_id = "9fc679a8-c734-4322-a205-ae91a5a318dd"
 
 [[r2_buckets]]
 binding = "MEDIA_BUCKET"
