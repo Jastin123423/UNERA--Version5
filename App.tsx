@@ -6756,40 +6756,44 @@ const createReel = useCallback(async (
       );
 
       try {
+        const foundEvent = safeArray(events).find((ev: any) => Number(ev?.id) === id);
+        const isGroupEvent = !!(foundEvent?.group_id || foundEvent?.is_group_event);
+        const base = isGroupEvent ? `/api/group-events/${id}` : `/api/events/${id}`;
+
         if (status === "going") {
-          await postJSON("/api/attend", { 
+          await postJSON(`${base}/attend`, { 
             event_id: id, 
             user_id: meId, 
-            action: "add" 
+            action: "attend" 
           });
           
-          await postJSON("/api/interested", { 
+          await postJSON(`${base}/interested`, { 
             event_id: id, 
             user_id: meId, 
             action: "remove" 
           }).catch(() => {});
         } 
         else if (status === "interested") {
-          await postJSON("/api/interested", { 
+          await postJSON(`${base}/interested`, { 
             event_id: id, 
             user_id: meId, 
-            action: "add" 
+            action: "interested" 
           });
           
-          await postJSON("/api/attend", { 
+          await postJSON(`${base}/attend`, { 
             event_id: id, 
             user_id: meId, 
             action: "remove" 
           }).catch(() => {});
         } 
         else if (status === "not_going") {
-          await postJSON("/api/attend", { 
+          await postJSON(`${base}/attend`, { 
             event_id: id, 
             user_id: meId, 
             action: "remove" 
           }).catch(() => {});
           
-          await postJSON("/api/interested", { 
+          await postJSON(`${base}/interested`, { 
             event_id: id, 
             user_id: meId, 
             action: "remove" 
@@ -10194,9 +10198,34 @@ const handleShareComplete = useCallback(
       });
 
       try {
-        await apiFetch(`/api/posts/${activeSharePost.id}/share`, {
+        let shareEndpoint = `/api/posts/${activeSharePost.id}/share`;
+        let shareBody: any = { destination, user_id: currentUser?.id };
+
+        const isGroupPost = !!(activeSharePost.group_id || activeSharePost.item_type === 'group_post');
+        const isSong = !!(activeSharePost.song_id || activeSharePost.song_id2 || activeSharePost.item_type === 'song' || activeSharePost.item_type === 'music');
+        const isProduct = !!(activeSharePost.product_id || activeSharePost.item_type === 'product');
+        const isEvent = !!(activeSharePost.event_id || activeSharePost.item_type === 'event');
+
+        if (isGroupPost) {
+          shareEndpoint = `/api/groups/posts/share`;
+          shareBody = { destination, post_id: activeSharePost.id, group_id: activeSharePost.group_id, user_id: currentUser?.id };
+        } else if (isSong) {
+          const songId = activeSharePost.song_id || activeSharePost.song_id2 || activeSharePost.id;
+          shareEndpoint = `/api/songs/${songId}/share`;
+          shareBody = { destination, song_id: songId, user_id: currentUser?.id };
+        } else if (isProduct) {
+          const prodId = activeSharePost.product_id || activeSharePost.id;
+          shareEndpoint = `/api/products/${prodId}/share`;
+          shareBody = { destination, product_id: prodId, user_id: currentUser?.id };
+        } else if (isEvent) {
+          const evId = activeSharePost.event_id || activeSharePost.id;
+          shareEndpoint = `/api/events/${evId}/share`;
+          shareBody = { destination, event_id: evId, user_id: currentUser?.id };
+        }
+
+        await apiFetch(shareEndpoint, {
           method: 'POST',
-          body: JSON.stringify({ destination }),
+          body: JSON.stringify(shareBody),
         });
       } catch (error) {
         console.error('Failed to record share:', error);
@@ -10643,10 +10672,6 @@ return (
       onCreatePostClick={() => {
         if (!requireAuth('Creating posts')) return;
         setShowCreatePostModal(true);
-      }}
-      onCreateStory={() => {
-        if (!requireAuth('Creating stories')) return;
-        setShowCreateStoryModal(true);
       }}
       onSearchClick={() => navigateTo('search')}
     />

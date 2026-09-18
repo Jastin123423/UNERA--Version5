@@ -194,7 +194,6 @@ export interface HeaderProps {
   groups?: any[];
   onAdsClick: () => void;
   onStoryFeedClick?: () => void;
-  onCreateStory?: () => void;
   currentUser: User | null;
   notifications: Notification[];
   users: User[];
@@ -407,7 +406,6 @@ export const Header: React.FC<HeaderProps> = ({
   groups = [],
   onAdsClick,
   onStoryFeedClick,
-  onCreateStory,
   currentUser,
   notifications,
   users,
@@ -668,7 +666,37 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* RIGHT: Search, Notifications (Carrot Orange Badge), Profile / Login */}
           <div className="flex items-center gap-2 sm:gap-2.5 flex-shrink-0">
-            {/* 1. Premium Top Search Button - 2x size, fat strong borders, translucent shade */}
+            {/* 1. Marketplace Button */}
+            <button
+              onClick={onMarketplaceClick}
+              className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-white/[0.08] border border-white/30 transition-all duration-150 flex items-center justify-center relative flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-white/40 shadow-md shadow-black/25 active:scale-95 group backdrop-blur-md ${
+                activeTab === 'marketplace' || currentView === 'marketplace'
+                  ? 'bg-white/[0.22] ring-2 ring-white/60 border-white/60 shadow-[0_0_15px_rgba(255,255,255,0.35)]'
+                  : 'hover:bg-white/[0.18] hover:border-white/50'
+              }`}
+              aria-label="Marketplace"
+              title="Marketplace"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="w-[26px] h-[26px] sm:w-[28px] sm:h-[28px] group-hover:scale-105 transition-transform"
+                fill="none"
+                stroke="#FFFFFF"
+                strokeWidth="2.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M3 9l2-5h14l2 5v2a3 3 0 0 1-6 0v-2H9v2a3 3 0 0 1-6 0V9z" />
+                <path d="M4 14v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6" />
+              </svg>
+              {Number(badgeCounts?.marketplace || 0) > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[20px] h-[20px] px-1.5 bg-[#F97316] text-white text-[11px] font-black rounded-full flex items-center justify-center shadow-md ring-2 ring-[#0F172A] leading-none pointer-events-none select-none tracking-tight">
+                  {Number(badgeCounts?.marketplace || 0) > 99 ? '99+' : badgeCounts?.marketplace}
+                </span>
+              )}
+            </button>
+
+            {/* 2. Search Button */}
             <button
               onClick={() => {
                 if (onSearchClick) {
@@ -695,7 +723,7 @@ export const Header: React.FC<HeaderProps> = ({
               </svg>
             </button>
 
-            {/* 2. Premium Notification Button - 2x size, fat strong borders, translucent shade */}
+            {/* 3. Notification Button */}
             <button
               onClick={() => {
                 if (onNotificationClick) {
@@ -712,7 +740,6 @@ export const Header: React.FC<HeaderProps> = ({
               aria-label="Notifications"
               title="Notifications"
             >
-              {/* Notification bell icon with 2x size and fat bold borders */}
               <svg
                 viewBox="0 0 24 24"
                 className="w-[30px] h-[30px] sm:w-[32px] sm:h-[32px] group-hover:scale-105 transition-transform"
@@ -731,34 +758,6 @@ export const Header: React.FC<HeaderProps> = ({
                 </span>
               )}
             </button>
-
-            {/* 3. Create Story Action & Profile / Login */}
-            {currentUser && onCreateStory && (
-              <button
-                type="button"
-                onClick={onCreateStory}
-                className="h-10 px-3 rounded-full bg-white/[0.08] hover:bg-white/[0.16] border border-white/20 hover:border-[#38BDF8]/60 text-white flex items-center gap-2 transition-all active:scale-95 shadow-sm group backdrop-blur-md"
-                title="Create Story"
-                aria-label="Create Story"
-              >
-                <div className="w-6 h-6 rounded-full p-[1.5px] bg-gradient-to-tr from-[#38BDF8] to-[#1877F2] flex items-center justify-center relative flex-shrink-0">
-                  <img
-                    src={currentUser.profile_image_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser.name || currentUser.username || 'User')}&background=1877F2&color=fff`}
-                    alt=""
-                    onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser.name || currentUser.username || 'User')}&background=1877F2&color=fff`;
-                    }}
-                    className="w-full h-full rounded-full object-cover"
-                  />
-                  <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-[#1877F2] text-white rounded-full flex items-center justify-center text-[8px] font-bold border border-[#0B1120] leading-none">
-                    +
-                  </span>
-                </div>
-                <span className="text-xs font-bold tracking-tight hidden sm:inline text-white group-hover:text-[#38BDF8] transition-colors">
-                  Story
-                </span>
-              </button>
-            )}
 
             {/* Profile Avatar / Login */}
             {currentUser ? (

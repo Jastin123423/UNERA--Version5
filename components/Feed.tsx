@@ -268,34 +268,54 @@ const rsvpEventDirect = async (args: {
   userId: number;
   newStatus: RSVPStatus;
   prevStatus?: '' | 'going' | 'interested';
+  isGroupEvent?: boolean;
 }) => {
-  const { eventId, userId, newStatus, prevStatus = '' } = args;
-  const endpoint =
-    newStatus === 'going'
-      ? '/api/attend'
-      : newStatus === 'interested'
-      ? '/api/interested'
-      : prevStatus === 'interested'
-      ? '/api/interested'
-      : '/api/attend';
-  const payloadStatus = {
-    event_id: eventId,
-    user_id: userId,
-    status: newStatus,
-  };
+  const { eventId, userId, newStatus, prevStatus = '', isGroupEvent = false } = args;
+  const base = isGroupEvent ? `/api/group-events/${eventId}` : `/api/events/${eventId}`;
+
   try {
-    return await postJSON(endpoint, payloadStatus);
-  } catch (e1: any) {
-    const payloadAction = {
-      event_id: eventId,
-      user_id: userId,
-      action: newStatus === 'not_going' ? 'remove' : 'add',
-    };
-    try {
-      return await postJSON(endpoint, payloadAction);
-    } catch (e2: any) {
-      throw new Error(e2?.message || e1?.message || 'RSVP failed');
+    if (newStatus === 'going') {
+      const res = await postJSON(`${base}/attend`, {
+        event_id: eventId,
+        user_id: userId,
+        action: 'attend',
+      });
+      await postJSON(`${base}/interested`, {
+        event_id: eventId,
+        user_id: userId,
+        action: 'remove',
+      }).catch(() => {});
+      return res;
+    } else if (newStatus === 'interested') {
+      const res = await postJSON(`${base}/interested`, {
+        event_id: eventId,
+        user_id: userId,
+        action: 'interested',
+      });
+      await postJSON(`${base}/attend`, {
+        event_id: eventId,
+        user_id: userId,
+        action: 'remove',
+      }).catch(() => {});
+      return res;
+    } else {
+      // not_going: remove from whichever was active
+      if (prevStatus === 'interested') {
+        return await postJSON(`${base}/interested`, {
+          event_id: eventId,
+          user_id: userId,
+          action: 'remove',
+        });
+      } else {
+        return await postJSON(`${base}/attend`, {
+          event_id: eventId,
+          user_id: userId,
+          action: 'remove',
+        });
+      }
     }
+  } catch (e: any) {
+    throw new Error(e?.message || 'RSVP failed');
   }
 };
 
@@ -1246,9 +1266,8 @@ const getFeedCommentFetchEndpoint = (itemType: string, p: any, viewerId: number)
       return `/api/events/${eventId}/comments?viewerId=${viewerId}`;
     }
     case 'group_post': {
-      const groupId = p?.group_id;
       const groupPostId = p?.id;
-      return `/api/groups/${groupId}/posts/${groupPostId}/comments?viewerId=${viewerId}`;
+      return `/api/group-post-comments?post_id=${groupPostId}&viewerId=${viewerId}`;
     }
     case 'product': {
       const productId = p?.product_id || p?.id;
@@ -1258,8 +1277,9 @@ const getFeedCommentFetchEndpoint = (itemType: string, p: any, viewerId: number)
       const reelId = p?.reel_id || p?.id;
       return `/api/reels/${reelId}/comments?viewerId=${viewerId}`;
     }
+    case 'song':
     case 'music': {
-      const songId = p?.song_id2 || p?.id;
+      const songId = p?.song_id2 || p?.song_id || p?.id;
       return `/api/songs/${songId}/comments?viewerId=${viewerId}`;
     }
     case 'podcast': {
@@ -1276,11 +1296,12 @@ const getCommentLikeEndpoint = (itemType: string, commentId: number): string => 
     case 'event':
       return `/api/event-comments/${commentId}/like`;
     case 'group_post':
-      return `/api/group-post-comments/${commentId}/like`;
+      return `/api/group-post-comment-likes`;
     case 'product':
       return `/api/product-reviews/${commentId}/like`;
     case 'reel':
       return `/api/reel-comments/${commentId}/like`;
+    case 'song':
     case 'music':
       return `/api/song-comments/${commentId}/like`;
     case 'podcast':
@@ -1360,12 +1381,18 @@ export const ReactionsSheet = memo(
       abortRef.current = new AbortController();
       (async () => {
         try {
-          const data = await apiFetch(
-            `/api/posts/${postId}/reactions?limit=500&offset=0`,
-            {
-              signal: abortRef.current?.signal as any,
-            } as any
-          );
+          const it = getFeedItemType(post);
+          let reactionsEndpoint = `/api/posts/${postId}/reactions?limit=500&offset=0`;
+          if (it === 'music' || it === 'song') {
+            reactionsEndpoint = `/api/songs/${postId}/reactions`;
+          } else if (it === 'product') {
+            reactionsEndpoint = `/api/products/${postId}/reactions`;
+          } else if (it === 'event') {
+            reactionsEndpoint = `/api/events/${postId}/reactions`;
+          }
+          const data = await apiFetch(reactionsEndpoint, {
+            signal: abortRef.current?.signal as any,
+          } as any);
           const arr = Array.isArray(data?.reactions) ? data.reactions : [];
           setItems(arr);
           const map: Record<string, number> = {};
@@ -7840,17 +7867,17 @@ export const CommentsSheet = memo(
         const eventId = p.event_id || p.id;
         return `/api/events/${eventId}/comments?viewerId=${viewerId}`;
       case 'group_post':
-        const groupId = p.group_id;
         const groupPostId = p.id;
-        return `/api/groups/${groupId}/posts/${groupPostId}/comments?viewerId=${viewerId}`;
+        return `/api/group-post-comments?post_id=${groupPostId}&viewerId=${viewerId}`;
       case 'product':
         const productId = p.product_id || p.id;
         return `/api/products/${productId}/reviews?viewerId=${viewerId}`;
       case 'reel':
         const reelId = p.reel_id || p.id;
         return `/api/reels/${reelId}/comments?viewerId=${viewerId}`;
+      case 'song':
       case 'music':
-        const songId = p.song_id2 || p.id;
+        const songId = p.song_id2 || p.song_id || p.id;
         return `/api/songs/${songId}/comments?viewerId=${viewerId}`;
       case 'podcast':
         const podcastId = p.podcast_id || p.id;
@@ -7869,17 +7896,16 @@ export const CommentsSheet = memo(
         const eventId = p.event_id || p.id;
         return `/api/events/${eventId}/comment`;
       case 'group_post':
-        const groupId = p.group_id;
-        const groupPostId = p.id;
-        return `/api/groups/${groupId}/posts/${groupPostId}/comment`;
+        return `/api/group-post-comments`;
       case 'product':
         const productId = p.product_id || p.id;
         return `/api/products/${productId}/review`;
       case 'reel':
         const reelId = p.reel_id || p.id;
         return `/api/reels/${reelId}/comment`;
+      case 'song':
       case 'music':
-        const songId = p.song_id2 || p.id;
+        const songId = p.song_id2 || p.song_id || p.id;
         return `/api/songs/${songId}/comment`;
       case 'podcast':
         const podcastId = p.podcast_id || p.id;
@@ -7897,11 +7923,12 @@ export const CommentsSheet = memo(
       case 'event':
         return `/api/event-comments/${commentId}/reply`;
       case 'group_post':
-        return `/api/group-post-comments/${commentId}/reply`;
+        return `/api/group-post-comments`;
       case 'product':
         return `/api/product-reviews/${commentId}/reply`;
       case 'reel':
         return `/api/reel-comments/${commentId}/reply`;
+      case 'song':
       case 'music':
         return `/api/song-comments/${commentId}/reply`;
       case 'podcast':
@@ -7919,11 +7946,12 @@ export const CommentsSheet = memo(
       case 'event':
         return `/api/event-comments/${commentId}/like`;
       case 'group_post':
-        return `/api/group-post-comments/${commentId}/like`;
+        return `/api/group-post-comment-likes`;
       case 'product':
         return `/api/product-reviews/${commentId}/like`;
       case 'reel':
         return `/api/reel-comments/${commentId}/like`;
+      case 'song':
       case 'music':
         return `/api/song-comments/${commentId}/like`;
       case 'podcast':
@@ -8066,7 +8094,11 @@ export const CommentsSheet = memo(
       const endpoint = getLikeEndpoint(comment.id);
       await apiFetch(endpoint, {
         method: 'POST',
-        body: JSON.stringify({ user_id: safeUserId(currentUser) }),
+        body: JSON.stringify({
+          user_id: safeUserId(currentUser),
+          comment_id: comment.id,
+          id: comment.id,
+        }),
       });
     } catch (error) {
       console.error('Failed to like comment:', error);
@@ -8313,6 +8345,8 @@ export const CommentsSheet = memo(
         text: finalText,
         user_id: safeUserId(currentUser),
         parent_comment_id: parentCommentId,
+        post_id: postId,
+        comment_id: replyTo?.id,
       };
       
       if (uploadedImageUrl) {
