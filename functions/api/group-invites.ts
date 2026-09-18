@@ -1,4 +1,5 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
+import { createNotification } from "../utils/createNotification";
 
 type Env = { DB: D1Database };
 
@@ -101,8 +102,10 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     const group = await getGroup(env, group_id);
     if (!group) return bad("Group not found", 404);
 
-    const canInvite = await isGroupAdminOrOwner(env, group_id, inviter_id);
-    if (!canInvite) return bad("Only group admins can send invites", 403);
+    const isAdmin = await isGroupAdminOrOwner(env, group_id, inviter_id);
+    const isMember = await isAlreadyMember(env, group_id, inviter_id);
+    const canInvite = isAdmin || isMember;
+    if (!canInvite) return bad("Only group admins or members can send invites", 403);
 
     const results: any[] = [];
 
@@ -155,6 +158,20 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
           .bind(inviter_id, toInt((existing as any).id))
           .run();
 
+        // Trigger notification to invitee
+        try {
+          await createNotification(
+            env,
+            invitee_id,
+            inviter_id,
+            "group_invite",
+            "group",
+            group_id,
+            `group:${group_id}:invite:${invitee_id}`,
+            `invited you to join ${(group as any)?.name || "a group"}`
+          );
+        } catch (_) {}
+
         results.push({
           invitee_id,
           success: true,
@@ -169,6 +186,20 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       )
         .bind(group_id, inviter_id, invitee_id)
         .run();
+
+      // Trigger notification to invitee
+      try {
+        await createNotification(
+          env,
+          invitee_id,
+          inviter_id,
+          "group_invite",
+          "group",
+          group_id,
+          `group:${group_id}:invite:${invitee_id}`,
+          `invited you to join ${(group as any)?.name || "a group"}`
+        );
+      } catch (_) {}
 
       results.push({
         invitee_id,

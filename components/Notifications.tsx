@@ -5,17 +5,81 @@ import { Notification, User } from '../types';
 interface NotificationDropdownProps {
     notifications: Notification[];
     users: User[];
+    currentUser?: User | null;
     onNotificationClick: (n: Notification) => void;
     onMarkAllRead: () => void;
+    onAcceptGroupInvite?: (inviteId: number, groupId: number) => Promise<any> | void;
+    onDeclineGroupInvite?: (inviteId: number, groupId: number) => Promise<any> | void;
 }
 
 export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
     notifications,
     users,
+    currentUser,
     onNotificationClick,
     onMarkAllRead,
+    onAcceptGroupInvite,
+    onDeclineGroupInvite,
 }) => {
     const [filter, setFilter] = useState<'all' | 'unread'>('all');
+    const [inviteStatus, setInviteStatus] = useState<Record<number, 'joined' | 'rejected'>>({});
+    const [inviteLoading, setInviteLoading] = useState<Record<number, boolean>>({});
+
+    const handleJoinInvite = async (e: React.MouseEvent, notif: Notification) => {
+        e.stopPropagation();
+        const notifId = Number(notif.id || 0);
+        const groupId = Number((notif as any).group_id || notif.entity_id || 0);
+        const inviteId = Number((notif as any).invite_id || (notif as any).parent_id || 0);
+
+        setInviteLoading((prev) => ({ ...prev, [notifId]: true }));
+        try {
+            if (onAcceptGroupInvite) {
+                await onAcceptGroupInvite(inviteId, groupId);
+            } else if (groupId) {
+                await fetch(`/api/groups/${groupId}/join`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-user-id': String(currentUser?.id || ''),
+                    },
+                    body: JSON.stringify({ user_id: currentUser?.id, group_id: groupId }),
+                });
+            }
+            setInviteStatus((prev) => ({ ...prev, [notifId]: 'joined' }));
+        } catch (err) {
+            console.error('Failed to accept invite:', err);
+        } finally {
+            setInviteLoading((prev) => ({ ...prev, [notifId]: false }));
+        }
+    };
+
+    const handleRejectInvite = async (e: React.MouseEvent, notif: Notification) => {
+        e.stopPropagation();
+        const notifId = Number(notif.id || 0);
+        const groupId = Number((notif as any).group_id || notif.entity_id || 0);
+        const inviteId = Number((notif as any).invite_id || (notif as any).parent_id || 0);
+
+        setInviteLoading((prev) => ({ ...prev, [notifId]: true }));
+        try {
+            if (onDeclineGroupInvite) {
+                await onDeclineGroupInvite(inviteId, groupId);
+            } else if (inviteId) {
+                await fetch(`/api/group-invites`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-user-id': String(currentUser?.id || ''),
+                    },
+                    body: JSON.stringify({ id: inviteId, status: 'rejected' }),
+                });
+            }
+            setInviteStatus((prev) => ({ ...prev, [notifId]: 'rejected' }));
+        } catch (err) {
+            console.error('Failed to decline invite:', err);
+        } finally {
+            setInviteLoading((prev) => ({ ...prev, [notifId]: false }));
+        }
+    };
 
     const getIcon = (type: string) => {
         switch (type) {
@@ -23,6 +87,13 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
                 return (
                     <div className="w-5 h-5 bg-[#EF4444] rounded-full flex items-center justify-center border-2 border-[#0B1120] shadow-sm">
                         <i className="fas fa-heart text-white text-[9px]"></i>
+                    </div>
+                );
+            case 'group_invite':
+            case 'invite':
+                return (
+                    <div className="w-5 h-5 bg-[#1877F2] rounded-full flex items-center justify-center border-2 border-[#0B1120] shadow-sm">
+                        <i className="fas fa-users text-white text-[9px]"></i>
                     </div>
                 );
             case 'comment':
@@ -136,9 +207,11 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
                     </div>
                 ) : (
                     filteredNotifications.map((notif) => {
-                        const sender = users.find((u) => u.id === notif.sender_id);
-                        const senderName = sender?.name || "Someone";
-                        const senderAvatar = sender?.profile_image_url || "/assets/icon.png";
+                        const sender = users.find((u) => u.id === (notif.sender_id || notif.actor_id)) || (notif as any).actor || (notif as any).sender || (notif as any).inviter;
+                        const senderName = sender?.name || (notif as any).sender_name || (notif as any).actor_name || "Someone";
+                        const senderAvatar = sender?.profile_image_url || (notif as any).sender_avatar || (notif as any).actor_image || `https://ui-avatars.com/api/?name=${encodeURIComponent(senderName)}&background=1877F2&color=fff`;
+                        const isInvite = String(notif.type || '').toLowerCase().includes('invite');
+                        const notifId = Number(notif.id || 0);
 
                         return (
                             <div
@@ -153,16 +226,53 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
                                 <div className="relative flex-shrink-0">
                                     <img
                                         src={senderAvatar}
-                                        alt=""
-                                        className="w-11 h-11 rounded-full object-cover border border-[#334155]/60"
+                                        alt={senderName}
+                                        onError={(e) => {
+                                            (e.currentTarget as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(senderName)}&background=1877F2&color=fff`;
+                                        }}
+                                        className="w-11 h-11 rounded-full object-cover border border-[#334155]/60 bg-[#1E293B]"
                                     />
                                     <div className="absolute -bottom-1 -right-1">{getIcon(notif.type)}</div>
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <p className="text-[13.5px] leading-snug text-[#F8FAFC] line-clamp-2">
                                         <span className="font-bold text-[#F8FAFC]">{senderName}</span>{" "}
-                                        <span className="text-[#CBD5E1]">{notif.content}</span>
+                                        <span className="text-[#CBD5E1]">{notif.content || notif.message}</span>
                                     </p>
+
+                                    {isInvite && (
+                                        <div className="mt-2 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                            {inviteStatus[notifId] === 'joined' ? (
+                                                <span className="inline-flex items-center gap-1 text-xs text-[#34D399] font-bold">
+                                                    <i className="fas fa-check text-[10px]"></i> Joined
+                                                </span>
+                                            ) : inviteStatus[notifId] === 'rejected' ? (
+                                                <span className="inline-flex items-center gap-1 text-xs text-[#94A3B8]">
+                                                    <i className="fas fa-times text-[10px]"></i> Declined
+                                                </span>
+                                            ) : (
+                                                <>
+                                                    <button
+                                                        type="button"
+                                                        disabled={inviteLoading[notifId]}
+                                                        onClick={(e) => handleJoinInvite(e, notif)}
+                                                        className="px-3 py-1 rounded-md bg-[#1877F2] hover:bg-[#166FE5] text-white text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
+                                                    >
+                                                        {inviteLoading[notifId] ? <i className="fas fa-circle-notch fa-spin text-[10px]"></i> : 'Join'}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        disabled={inviteLoading[notifId]}
+                                                        onClick={(e) => handleRejectInvite(e, notif)}
+                                                        className="px-2.5 py-1 rounded-md bg-[#1E293B] hover:bg-[#334155] text-[#CBD5E1] text-xs font-medium border border-[#334155] transition-all disabled:opacity-50 cursor-pointer"
+                                                    >
+                                                        Reject
+                                                    </button>
+                                                </>
+                                            )}
+                                        </div>
+                                    )}
+
                                     <span
                                         className={`text-[11.5px] mt-1 block font-medium ${
                                             notif.is_read ? 'text-[#64748B]' : 'text-[#F97316]'

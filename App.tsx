@@ -10644,6 +10644,10 @@ return (
         if (!requireAuth('Creating posts')) return;
         setShowCreatePostModal(true);
       }}
+      onCreateStory={() => {
+        if (!requireAuth('Creating stories')) return;
+        setShowCreateStoryModal(true);
+      }}
       onSearchClick={() => navigateTo('search')}
     />
 
@@ -11343,12 +11347,15 @@ return (
   <NotificationsPage
     notifications={enrichedNotifications}
     users={users}
+    currentUser={currentUser}
     onBack={() => navigateTo('home')}
     onProfileClick={(id) => openProfile(id)}
     onOpenNotification={openNotificationTarget}
     onDeleteNotification={deleteNotification}
     onMarkAllAsRead={markAllNotificationsAsRead}
     onLoadMore={loadMoreNotifications}
+    onAcceptGroupInvite={acceptGroupInvite}
+    onDeclineGroupInvite={declineGroupInvite}
     hasMore={hasMoreNotifications}
     stickyHeader
   />

@@ -194,6 +194,7 @@ export interface HeaderProps {
   groups?: any[];
   onAdsClick: () => void;
   onStoryFeedClick?: () => void;
+  onCreateStory?: () => void;
   currentUser: User | null;
   notifications: Notification[];
   users: User[];
@@ -406,6 +407,7 @@ export const Header: React.FC<HeaderProps> = ({
   groups = [],
   onAdsClick,
   onStoryFeedClick,
+  onCreateStory,
   currentUser,
   notifications,
   users,
@@ -730,16 +732,51 @@ export const Header: React.FC<HeaderProps> = ({
               )}
             </button>
 
-            {/* 3. Profile / Login */}
+            {/* 3. Create Story Action & Profile / Login */}
+            {currentUser && onCreateStory && (
+              <button
+                type="button"
+                onClick={onCreateStory}
+                className="h-10 px-3 rounded-full bg-white/[0.08] hover:bg-white/[0.16] border border-white/20 hover:border-[#38BDF8]/60 text-white flex items-center gap-2 transition-all active:scale-95 shadow-sm group backdrop-blur-md"
+                title="Create Story"
+                aria-label="Create Story"
+              >
+                <div className="w-6 h-6 rounded-full p-[1.5px] bg-gradient-to-tr from-[#38BDF8] to-[#1877F2] flex items-center justify-center relative flex-shrink-0">
+                  <img
+                    src={currentUser.profile_image_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser.name || currentUser.username || 'User')}&background=1877F2&color=fff`}
+                    alt=""
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser.name || currentUser.username || 'User')}&background=1877F2&color=fff`;
+                    }}
+                    className="w-full h-full rounded-full object-cover"
+                  />
+                  <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-[#1877F2] text-white rounded-full flex items-center justify-center text-[8px] font-bold border border-[#0B1120] leading-none">
+                    +
+                  </span>
+                </div>
+                <span className="text-xs font-bold tracking-tight hidden sm:inline text-white group-hover:text-[#38BDF8] transition-colors">
+                  Story
+                </span>
+              </button>
+            )}
+
+            {/* Profile Avatar / Login */}
             {currentUser ? (
               <button
                 onClick={() => setShowProfileMenu((prev) => !prev)}
-                className="w-10 h-10 rounded-full overflow-hidden border border-[#334155]/60 hover:border-[#F97316] transition-all flex items-center justify-center ml-0.5 focus:outline-none focus:ring-2 focus:ring-[#F97316]/40 active:scale-95 shadow-sm shadow-black/30"
+                className="w-10 h-10 sm:w-11 sm:h-11 rounded-full overflow-hidden border-2 border-[#334155]/80 hover:border-[#38BDF8] transition-all flex items-center justify-center ml-0.5 focus:outline-none focus:ring-2 focus:ring-[#38BDF8]/50 active:scale-95 shadow-md shadow-black/40 bg-[#1E293B] relative"
                 aria-label="User Profile"
+                title={currentUser.name}
               >
                 <img
-                  src={currentUser.profile_image_url}
+                  src={
+                    currentUser.profile_image_url ||
+                    `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser.name || currentUser.username || 'User')}&background=1877F2&color=fff`
+                  }
                   alt={currentUser.name}
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser.name || currentUser.username || 'User')}&background=1877F2&color=fff`;
+                  }}
                   className="w-full h-full object-cover"
                 />
               </button>
@@ -1019,6 +1056,7 @@ export const Header: React.FC<HeaderProps> = ({
           <NotificationDropdown
             notifications={notifications}
             users={users}
+            currentUser={currentUser}
             onNotificationClick={(n) => {
               setShowNotifications(false);
               if ((n as any).post_id) onNavigate(`post-${(n as any).post_id}`);
@@ -1043,8 +1081,14 @@ export const Header: React.FC<HeaderProps> = ({
             }}
           >
             <img
-              src={currentUser.profile_image_url}
+              src={
+                currentUser.profile_image_url ||
+                `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser.name || currentUser.username || 'User')}&background=1877F2&color=fff`
+              }
               alt=""
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser.name || currentUser.username || 'User')}&background=1877F2&color=fff`;
+              }}
               className="w-11 h-11 rounded-xl object-cover border border-[#1E293B]"
             />
             <div className="flex flex-col min-w-0">

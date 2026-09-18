@@ -1,5 +1,5 @@
 import type { PagesFunction } from "@cloudflare/workers-types";
-import { createNotification } from "../../../utils/createNotification";
+import { createNotification } from "../../utils/createNotification";
 
 type Env = { DB: D1Database };
 
@@ -30,14 +30,11 @@ const toNum = (v: any, fallback = 0) => {
 const toText = (v: any, fallback = "") =>
   typeof v === "string" ? v.trim() : fallback;
 
-export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }) => {
+export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   try {
     if (!env.DB) {
       return json({ success: false, error: "DB binding missing (DB)" }, 500);
     }
-
-    // ✅ song_id comes from the URL: /api/songs/:id/share
-    const songId = toNum((params as any)?.id, 0);
 
     const body = await request.json().catch(() => ({} as any));
 
@@ -45,21 +42,22 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
     const bodyUserId = toNum(body.user_id, 0);
     const userId = headerUserId || bodyUserId || 0;
 
+    const songId = toNum(body.song_id, 0);
     const destination = toText(body.destination, "feed").toLowerCase() || "feed";
     const itemType = toText(body.item_type, "music").toLowerCase() || "music";
+    const sharedAt = toText(body.shared_at);
     const message = toText(body.message) || null;
 
     if (!songId) {
-      return json({ success: false, error: "Invalid song id" }, 400);
+      return json({ success: false, error: "song_id missing" }, 400);
     }
 
     if (!userId) {
       return json({ success: false, error: "user_id missing" }, 400);
     }
 
-    // ✅ songs uses uploader_id
     const song = await env.DB.prepare(
-      `SELECT id, uploader_id
+      `SELECT id, user_id
        FROM songs
        WHERE id = ?
        LIMIT 1`
@@ -69,7 +67,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
       return json({ success: false, error: "Song not found" }, 404);
     }
 
-    const songOwnerId = toNum((song as any)?.uploader_id, 0);
+    const songOwnerId = toNum((song as any)?.user_id, 0);
 
     const ins = await env.DB.prepare(
       `
@@ -78,13 +76,19 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
         user_id,
         destination,
         item_type,
+        shared_at,
         message
       )
-      VALUES (?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?)
       `
-    )
-      .bind(songId, userId, destination, itemType, message)
-      .run();
+    ).bind(
+      songId,
+      userId,
+      destination,
+      itemType || "music",
+      sharedAt || null,
+      message
+    ).run();
 
     const shareId = toNum(ins.meta?.last_row_id, 0);
 
@@ -102,23 +106,18 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
       WHERE id = ?
       LIMIT 1
       `
-    )
-      .bind(shareId)
-      .first();
+    ).bind(shareId).first();
 
-    // Self-notify guard
-    if (songOwnerId && songOwnerId !== userId) {
-      await createNotification(
-        env,
-        songOwnerId,
-        userId,
-        "share",
-        "song",
-        songId,
-        `song:${songId}:share`,
-        "shared your song"
-      );
-    }
+    await createNotification(
+      env,
+      songOwnerId,
+      userId,
+      "share",
+      "song",
+      songId,
+      `song:${songId}:share`,
+      "shared your song"
+    );
 
     const countRow = await env.DB.prepare(
       `
@@ -126,9 +125,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
       FROM song_shares
       WHERE song_id = ?
       `
-    )
-      .bind(songId)
-      .first();
+    ).bind(songId).first();
 
     return json({
       success: true,
