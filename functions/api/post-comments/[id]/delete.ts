@@ -19,20 +19,10 @@ const toNum = (v: any, fallback = 0) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
-/**
- * Platform-admin roles.
- * Update this list to match the values stored in users.role.
- */
-const ADMIN_ROLES = new Set([
-  "admin",
-  "superadmin",
-  "super_admin",
-  "super-admin",
-  "administrator",
-  "moderator",
-  "owner",
-  "staff",
-]);
+// Optional escape hatch — set to true if you want platform admins to delete anything.
+// Leave false to strictly limit to comment author + post owner.
+const ALLOW_PLATFORM_ADMIN = true;
+const PLATFORM_ADMIN_ROLES = new Set(["admin", "superadmin", "moderator", "owner"]);
 
 export const onRequestOptions: PagesFunction = async () =>
   new Response(null, { status: 204, headers: cors });
@@ -57,39 +47,46 @@ const handle = async (request: Request, env: Env, params: any): Promise<Response
     const userId = headerUserId || bodyUserId || queryUserId || 0;
     if (!userId) return json({ success: false, error: "user_id is required" }, 400);
 
-    // Load comment
+    // Load comment + post owner in one query
     const comment = await env.DB
       .prepare(
-        `SELECT id FROM post_comments
-         WHERE id = ? AND COALESCE(is_deleted, 0) = 0
+        `SELECT
+           c.id,
+           c.user_id  AS comment_author_id,
+           c.post_id,
+           p.user_id  AS post_owner_id
+         FROM post_comments c
+         LEFT JOIN posts p ON p.id = c.post_id
+         WHERE c.id = ?
+           AND COALESCE(c.is_deleted, 0) = 0
          LIMIT 1`
       )
       .bind(commentId)
       .first<any>();
 
-    if (!comment) return json({ success: false, error: "Comment not found" }, 404);
-
-    // Load viewer
-    const user = await env.DB
-      .prepare(`SELECT id, role FROM users WHERE id = ? LIMIT 1`)
-      .bind(userId)
-      .first<any>();
-
-    if (!user) {
-      return json({ success: false, error: "User not found" }, 404);
+    if (!comment) {
+      return json({ success: false, error: "Comment not found" }, 404);
     }
 
-    const role = String(user?.role || "").trim().toLowerCase();
-    const isAdmin = ADMIN_ROLES.has(role);
+    const isCommentAuthor = toNum(comment.comment_author_id) === userId;
+    const isPostOwner = toNum(comment.post_owner_id) === userId;
 
-    if (!isAdmin) {
-      // Return the actual role so you can debug why it failed
+    let isPlatformAdmin = false;
+    if (ALLOW_PLATFORM_ADMIN) {
+      const u = await env.DB
+        .prepare(`SELECT role FROM users WHERE id = ? LIMIT 1`)
+        .bind(userId)
+        .first<any>();
+      const role = String(u?.role || "").trim().toLowerCase();
+      isPlatformAdmin = PLATFORM_ADMIN_ROLES.has(role);
+    }
+
+    if (!isCommentAuthor && !isPostOwner && !isPlatformAdmin) {
       return json(
         {
           success: false,
-          error: "Only admins can delete",
-          your_role: role || null,
-          allowed_roles: Array.from(ADMIN_ROLES),
+          error: "Not allowed to delete this comment",
+          reason: "Only the comment author, the post owner, or a platform admin can delete",
         },
         403
       );
@@ -108,11 +105,19 @@ const handle = async (request: Request, env: Env, params: any): Promise<Response
       .bind(userId, commentId)
       .run();
 
+    // Who deleted it (for UI / moderation log)
+    const role = isCommentAuthor
+      ? "comment_author"
+      : isPostOwner
+        ? "post_owner"
+        : "platform_admin";
+
     return json({
       success: true,
       comment_id: commentId,
       deleted: true,
       deleted_by: userId,
+      by: role,
     });
   } catch (err: any) {
     return json(
