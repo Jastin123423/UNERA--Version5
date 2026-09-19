@@ -1,5 +1,3 @@
-
-
 import type { PagesFunction } from "@cloudflare/workers-types";
 import { createNotification } from "../../../utils/createNotification";
 
@@ -8,104 +6,164 @@ type Env = { DB: D1Database };
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST,OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, x-user-id",
 };
 
 export const onRequestOptions: PagesFunction = async () =>
   new Response(null, { status: 204, headers: cors });
 
+const json = (data: any, status = 200) =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: { ...cors, "Content-Type": "application/json", "Cache-Control": "no-store" },
+  });
+
+const toNum = (v: any, fallback = 0) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+};
+
+const toStr = (v: any, fallback = "") => (typeof v === "string" ? v : fallback);
+
 export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }) => {
-  const product_id = Number((params as any)?.id);
-  const body = await request.json();
-  const user_id = Number(body.user_id);
-  const text = String(body.text || "").trim();
-  const parent_comment_id = body.parent_comment_id ? Number(body.parent_comment_id) : null;
+  try {
+    if (!env.DB) return json({ success: false, error: "DB binding missing" }, 500);
 
-  if (!product_id || !user_id || !text) {
-    return Response.json({ error: "Invalid data" }, { headers: cors });
-  }
+    const product_id = toNum((params as any)?.id, 0);
+    const body: any = await request.json().catch(() => ({}));
 
-  // Insert comment/review
-  const result = await env.DB.prepare(`
-    INSERT INTO product_comments (product_id, user_id, parent_comment_id, text)
-    VALUES (?, ?, ?, ?)
-    RETURNING id
-  `)
-    .bind(product_id, user_id, parent_comment_id, text)
-    .first();
+    const headerUserId = toNum(request.headers.get("x-user-id"), 0);
+    const bodyUserId = toNum(body.user_id, 0);
+    const userId = headerUserId || bodyUserId || 0;
 
-  // Increment comments count
-  await env.DB.prepare(`
-    UPDATE products 
-    SET comments_count = comments_count + 1 
-    WHERE id = ?
-  `)
-    .bind(product_id)
-    .run();
+    const text = toStr(body.text, "").trim();
+    const image_url = toStr(body.image_url, "").trim() || null;
+    const parent_comment_id =
+      body.parent_comment_id == null ? null : toNum(body.parent_comment_id, 0);
 
-  // Get product owner for notification
-  const product = await env.DB.prepare(`
-    SELECT seller_id FROM products WHERE id = ?
-  `)
-    .bind(product_id)
-    .first();
+    if (!product_id) return json({ success: false, error: "Invalid product id" }, 400);
+    if (!userId)     return json({ success: false, error: "user_id is required" }, 400);
+    if (!text && !image_url) {
+      return json({ success: false, error: "text or image_url is required" }, 400);
+    }
+    if (text && text.length > 2000) {
+      return json({ success: false, error: "Review is too long" }, 400);
+    }
 
-  // Notify product owner (if not self)
-  if (product && product.seller_id !== user_id) {
-    await createNotification(
-      env,
-      product.seller_id,     // recipient_id
-      user_id,               // actor_id
-      "comment",             // type
-      "product",             // entity_type
-      product_id,            // entity_id
-      `comment_product_${product_id}`  // group_key
-    );
-  }
+    // product exists + owner
+    const product = await env.DB
+      .prepare(`SELECT id, seller_id FROM products WHERE id = ? LIMIT 1`)
+      .bind(product_id)
+      .first<any>();
 
-  // If reply, notify original comment author
-  if (parent_comment_id) {
-    const parentComment = await env.DB.prepare(`
-      SELECT user_id FROM product_comments WHERE id = ?
-    `)
-      .bind(parent_comment_id)
+    if (!product) return json({ success: false, error: "Product not found" }, 404);
+
+    // parent comment checks
+    let parentComment: any = null;
+    if (parent_comment_id) {
+      parentComment = await env.DB
+        .prepare(
+          `SELECT id, product_id, user_id
+           FROM product_comments
+           WHERE id = ? AND COALESCE(is_deleted, 0) = 0
+           LIMIT 1`
+        )
+        .bind(parent_comment_id)
+        .first<any>();
+
+      if (!parentComment) {
+        return json({ success: false, error: "Parent comment not found" }, 404);
+      }
+      if (toNum(parentComment.product_id, 0) !== product_id) {
+        return json(
+          { success: false, error: "Parent comment does not belong to this product" },
+          400
+        );
+      }
+    }
+
+    const ins = await env.DB
+      .prepare(
+        `INSERT INTO product_comments (product_id, user_id, parent_comment_id, text, image_url)
+         VALUES (?, ?, ?, ?, ?)`
+      )
+      .bind(product_id, userId, parent_comment_id, text || "", image_url)
+      .run();
+
+    const newId = toNum(ins.meta?.last_row_id, 0);
+
+    // best-effort counter (skip if column missing)
+    try {
+      await env.DB
+        .prepare(
+          `UPDATE products SET comments_count = COALESCE(comments_count, 0) + 1 WHERE id = ?`
+        )
+        .bind(product_id)
+        .run();
+    } catch (_) {}
+
+    // notifications
+    const sellerId = toNum(product.seller_id, 0);
+    if (sellerId && sellerId !== userId) {
+      try {
+        await createNotification(
+          env,
+          sellerId,
+          userId,
+          "comment",
+          "product",
+          product_id,
+          `comment_product_${product_id}`
+        );
+      } catch (_) {}
+    }
+
+    if (parent_comment_id && parentComment) {
+      const parentOwnerId = toNum(parentComment.user_id, 0);
+      if (parentOwnerId && parentOwnerId !== userId) {
+        try {
+          await createNotification(
+            env,
+            parentOwnerId,
+            userId,
+            "reply",
+            "product_comment",
+            parent_comment_id,
+            `reply_comment_${parent_comment_id}`
+          );
+        } catch (_) {}
+      }
+    }
+
+    const comment = await env.DB
+      .prepare(
+        `SELECT
+           pc.id,
+           pc.user_id,
+           pc.product_id,
+           pc.text,
+           pc.image_url,
+           pc.parent_comment_id,
+           pc.created_at,
+           pc.updated_at,
+           pc.likes_count,
+           u.name AS author_name,
+           u.username AS author_username,
+           u.profile_image_url AS author_image,
+           0 AS liked_by_me
+         FROM product_comments pc
+         LEFT JOIN users u ON u.id = pc.user_id
+         WHERE pc.id = ?
+         LIMIT 1`
+      )
+      .bind(newId)
       .first();
 
-    if (parentComment && parentComment.user_id !== user_id) {
-      await createNotification(
-        env,
-        parentComment.user_id,     // recipient_id
-        user_id,                   // actor_id
-        "reply",                   // type
-        "product_comment",         // entity_type
-        parent_comment_id,         // entity_id
-        `reply_comment_${parent_comment_id}`  // group_key
-      );
-    }
+    return json({ success: true, comment }, 201);
+  } catch (err: any) {
+    return json(
+      { success: false, error: err?.message || "Failed to create review" },
+      500
+    );
   }
-
-  // Get full comment with user details
-  const comment = await env.DB.prepare(`
-    SELECT 
-      pc.id,
-      pc.user_id,
-      pc.text,
-      pc.parent_comment_id,
-      pc.created_at,
-      pc.likes_count,
-      users.name as author_name,
-      users.username as author_username,
-      users.profile_image_url as author_image,
-      0 as liked_by_me
-    FROM product_comments pc
-    JOIN users ON users.id = pc.user_id
-    WHERE pc.id = ?
-  `)
-    .bind(result.id)
-    .first();
-
-  return Response.json({
-    success: true,
-    comment
-  }, { headers: cors });
 };
