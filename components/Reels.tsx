@@ -1171,7 +1171,7 @@ const ReelCommentsSheet: React.FC<{
         {/* Header */}
         <div className="px-4 pb-3 border-b border-white/10 flex justify-between items-center bg-[#0B1120] shrink-0">
           <span className="text-[#E4E6EB] font-black text-[15px] uppercase tracking-[2px]">
-            {comments.length} {replyTo ? 'Replies' : 'Comments'}
+            {replyTo ? `${comments.length} Replies` : `Video Discussion (${comments.length})`}
           </span>
           {replyTo && (
             <button 

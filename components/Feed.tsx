@@ -3188,7 +3188,14 @@ const normalizeEventFromFeed = (item: any) => {
   const id = Number(item?.event_id ?? item?.id ?? meta?.event_id ?? 0);
 
   return {
+    ...item,
     id,
+    event_id: id,
+    type: 'event',
+    item_type: 'event',
+    post_type: 'event',
+    kind: 'event',
+    feed_key: item?.feed_key || `event:${id}`,
 
     title: String(
       item?.content ??
@@ -4417,16 +4424,18 @@ export const EventPost = memo(
     const [reactionCount, setReactionCount] = useState<number>(() =>
       Number(
         event.reactions_count ??
+        event.reactionsCount ??
         event.likes_count ??
         (Array.isArray(event.reactions) ? event.reactions.length : 0)
       )
     );
     const [myReaction, setMyReaction] = useState<ReactionType | undefined>(() =>
-      event.my_reaction || event.user_reaction || undefined
+      (event.my_reaction || event.myReaction || event.user_reaction || undefined) as ReactionType
     );
     const [commentCount, setCommentCount] = useState<number>(() =>
       Number(
         event.comments_count ??
+        event.comment_count ??
         (Array.isArray(event.comments) ? event.comments.length : 0)
       )
     );
@@ -4435,34 +4444,35 @@ export const EventPost = memo(
     );
 
     const [reactionsArr, setReactionsArr] = useState<any[]>(() => {
-      if (Array.isArray(event.reactions)) return event.reactions;
-      if (Array.isArray(event.reactions_preview)) return event.reactions_preview;
+      if (Array.isArray(event.reactions) && event.reactions.length > 0) return event.reactions;
+      if (Array.isArray(event.reactions_preview) && event.reactions_preview.length > 0) return event.reactions_preview;
       return [];
     });
 
     const reactorNameFromApi = String(event.reactor_name ?? event.reactorName ?? '').trim();
 
     useEffect(() => {
-      if (Array.isArray(event.reactions)) setReactionsArr(event.reactions);
-      else if (Array.isArray(event.reactions_preview)) setReactionsArr(event.reactions_preview);
+      if (Array.isArray(event.reactions) && event.reactions.length > 0) setReactionsArr(event.reactions);
+      else if (Array.isArray(event.reactions_preview) && event.reactions_preview.length > 0) setReactionsArr(event.reactions_preview);
     }, [event.reactions, event.reactions_preview]);
 
     useEffect(() => {
       const eventId = Number(event.event_id || event.id || 0);
       if (!eventId) return;
       let isMounted = true;
-      apiFetch(`/api/events/${eventId}/reactions?viewerId=${safeUserId(currentUser)}`)
+      const vId = safeUserId(currentUser);
+      apiFetch(`/api/events/${eventId}/reactions?viewerId=${vId}`)
         .then((data: any) => {
           if (!isMounted) return;
           if (data?.success) {
-            if (Array.isArray(data.reactions)) {
+            if (Array.isArray(data.reactions) && data.reactions.length > 0) {
               setReactionsArr(data.reactions);
             }
             if (typeof data.reactions_count === 'number') {
               setReactionCount(data.reactions_count);
             }
-            if (data.my_reaction !== undefined) {
-              setMyReaction(data.my_reaction || undefined);
+            if (vId > 0 && data.my_reaction !== undefined) {
+              setMyReaction((data.my_reaction || undefined) as ReactionType);
             }
             if (typeof data.comments_count === 'number') {
               setCommentCount(data.comments_count);
@@ -4476,9 +4486,22 @@ export const EventPost = memo(
       return () => {
         isMounted = false;
       };
-    }, [event.id, event.event_id, currentUser]);
+    }, [event.id, event.event_id, currentUser?.id]);
 
-    const finalReactionCount = reactionCount > 0 ? reactionCount : reactionsArr.length;
+    const finalMyReaction: ReactionType | undefined =
+      myReaction ||
+      (currentUser && reactionsArr.length
+        ? (reactionsArr.find(
+            (r: any) => Number(r.user_id) === safeUserId(currentUser)
+          )?.type as ReactionType)
+        : undefined) ||
+      ((event.my_reaction || event.myReaction) as ReactionType);
+
+    const finalReactionCount = Math.max(
+      reactionCount,
+      Number(event.reactions_count ?? event.reactionsCount ?? event.likes_count ?? 0),
+      reactionsArr.length
+    );
 
     const emojiList = useMemo(() => {
       const types = Array.from(
@@ -4513,18 +4536,24 @@ export const EventPost = memo(
     }, [finalReactionCount, reactorName]);
 
     useEffect(() => {
-      if (typeof event.reactions_count === 'number') {
-        setReactionCount(event.reactions_count);
-      } else if (typeof event.likes_count === 'number') {
-        setReactionCount(event.likes_count);
-      } else if (Array.isArray(event.reactions)) {
-        setReactionCount(event.reactions.length);
+      const serverReactions = Number(
+        event.reactions_count ??
+        event.reactionsCount ??
+        event.likes_count ??
+        0
+      );
+      if (serverReactions > 0 || event.reactions_count !== undefined) {
+        setReactionCount(serverReactions);
       }
-      if (event.my_reaction !== undefined) {
-        setMyReaction(event.my_reaction || undefined);
+      if (event.my_reaction !== undefined && event.my_reaction !== null) {
+        setMyReaction((event.my_reaction || undefined) as ReactionType);
+      } else if (event.myReaction !== undefined && event.myReaction !== null) {
+        setMyReaction((event.myReaction || undefined) as ReactionType);
       }
       if (typeof event.comments_count === 'number') {
         setCommentCount(event.comments_count);
+      } else if (typeof event.comment_count === 'number') {
+        setCommentCount(event.comment_count);
       } else if (Array.isArray(event.comments)) {
         setCommentCount(event.comments.length);
       }
@@ -4533,12 +4562,21 @@ export const EventPost = memo(
       } else if (typeof event.shares === 'number') {
         setShareCount(event.shares);
       }
+      if (Array.isArray(event.reactions) && event.reactions.length > 0) {
+        setReactionsArr(event.reactions);
+      } else if (Array.isArray(event.reactions_preview) && event.reactions_preview.length > 0) {
+        setReactionsArr(event.reactions_preview);
+      }
     }, [
       event.reactions_count,
+      event.reactionsCount,
       event.likes_count,
       event.reactions,
+      event.reactions_preview,
       event.my_reaction,
+      event.myReaction,
       event.comments_count,
+      event.comment_count,
       event.comments,
       event.shares_count,
       event.shares,
@@ -4752,14 +4790,25 @@ export const EventPost = memo(
     };
 
     const handleOpenComments = () => {
-      if (onOpenComments && event.id) {
+      if (onOpenComments) {
+        const eventId = Number(event.event_id || event.id || 0);
         const eventAsPost = {
-          id: event.id,
-          type: 'event',
           ...event,
+          id: eventId,
+          event_id: eventId,
+          type: 'event',
+          item_type: 'event',
+          post_type: 'event',
+          kind: 'event',
+          source: 'event',
+          feed_key: `event:${eventId}`,
           comments_count: commentCount,
-          reactions_count: reactionCount,
-          my_reaction: myReaction,
+          reactions_count: finalReactionCount,
+          reactionsCount: finalReactionCount,
+          my_reaction: finalMyReaction,
+          myReaction: finalMyReaction,
+          shares: shareCount,
+          shares_count: shareCount,
         };
         onOpenComments(eventAsPost as PostType);
       }
@@ -5033,7 +5082,7 @@ export const EventPost = memo(
             >
               <div className="flex items-center gap-4">
                 <ReactionButton
-                  currentUserReactions={myReaction || undefined}
+                  currentUserReactions={finalMyReaction || undefined}
                   reactionCount={finalReactionCount}
                   onReact={handleReact}
                   isGuest={!currentUser}
@@ -5954,7 +6003,7 @@ export const Post = memo(
       followLoading={followLoading}
       onReact={(eventAsPost, type) => onReact(eventAsPost as PostType, type)}
       onShare={onShare}
-      onOpenComments={() => onOpenComments(post)}
+      onOpenComments={(evPost) => onOpenComments(evPost || post)}
       groups={groups}
       brands={brands}
       chats={chats}
@@ -6283,6 +6332,8 @@ export const Post = memo(
             isFollowing={isFollowing}
             onFollow={onFollow}
             onHashtagClick={onHashtagClick}
+            onOpenComments={() => onOpenComments(post)}
+            onOpenReactions={() => handleOpenReactionsSheet()}
           />
         </article>
       );
@@ -8110,7 +8161,7 @@ export const CommentsSheet = memo(
   currentUser: User;
   users: User[];
   onClose: () => void;
-  onComment?: (postId: number, text: string, imageFile?: File) => void;
+  onComment?: (postId: any, text: string, parentCommentId?: number | null, imageFile?: File) => void;
   onCommentAdded?: () => void;
   onLikeComment?: (commentId: number) => void;
   getCommentAuthor?: (id: number) => User | undefined;
@@ -8642,7 +8693,7 @@ export const CommentsSheet = memo(
     }
 
     if (onComment) {
-      onComment(postId, finalText, selectedImage || undefined);
+      onComment(post || postId, finalText, parentCommentId, selectedImage || undefined);
     }
 
     // Actual API call
@@ -8799,7 +8850,13 @@ export const CommentsSheet = memo(
           >
             <i className="fas fa-arrow-left text-[#E4E6EB] text-xl"></i>
           </button>
-          <div className="text-[#E4E6EB] font-bold text-[22px]">Post</div>
+          <div className="text-[#E4E6EB] font-bold text-[22px]">
+            {post?.type === 'event'
+              ? 'Event Discussion'
+              : (String(post?.type) === 'reel' || post?.media_type === 'video' || (post as any)?.post_type === 'reel')
+              ? 'Video Discussion'
+              : 'Post'}
+          </div>
         </div>
 
         <div className="flex items-center gap-4">
@@ -9188,6 +9245,7 @@ export {
   getMarketplacePriceLine,
   normalizeEventFromFeed,
   topReactionEmojis,
+  pickStableReactorName,
   safeArray,
   safeNumber,
   safeString,
@@ -9532,6 +9590,7 @@ export const Feed = memo(({
                 isFollowing={isFollowing}
                 onFollow={() => onFollow?.(authorId)}
                 onHashtagClick={onHashtagClick}
+                onOpenComments={() => onOpenComments?.(reelAsPost)}
               />
             </article>
           );

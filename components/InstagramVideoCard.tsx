@@ -1,8 +1,18 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { apiFetch } from '../utils/api';
-import { safeUserId, avatarFrom, formatRelativeTime } from './Feed';
+import {
+  safeUserId,
+  avatarFrom,
+  formatRelativeTime,
+  ReactionButton,
+  ReactionsSheet,
+  topReactionEmojis,
+  formatReactionText,
+  pickStableReactorName,
+} from './Feed';
 import { useIsPostSaved, toggleSavePost } from '../utils/savedPosts';
 import { VerifiedBadge } from './VerifiedBadge';
+import type { ReactionType } from '../types';
 
 const formatCount = (count: number): string => {
   if (!count || count <= 0) return '0';
@@ -18,16 +28,17 @@ const formatCount = (count: number): string => {
 };
 
 interface InstagramVideoCardProps {
-  post: any;
-  author: any;
-  currentUser: any;
+  post?: any;
+  reel?: any;
+  author?: any;
+  currentUser?: any;
   users?: any[];
   stories?: any[];
   hasStory?: boolean;
   autoplay?: boolean;
   onProfileClick: (userId: number) => void;
   onStoryClick?: (userId: number) => void;
-  onReact?: (postId: number, type: any) => void;
+  onReact?: (postOrId: any, type: any) => void;
   onShare?: (postId: number, count: number) => void;
   onVideoClick?: (post: any) => void;
   onDelete?: (postId: number) => void;
@@ -36,6 +47,7 @@ interface InstagramVideoCardProps {
   onFollow?: (userId: number) => void;
   onHashtagClick?: (tag: string) => void;
   onOpenComments?: (post: any) => void;
+  onOpenReactions?: (post: any) => void;
 }
 
 interface ReelComment {
@@ -56,6 +68,7 @@ interface ReelComment {
 
 export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
   post,
+  reel,
   author,
   currentUser,
   users = [],
@@ -73,30 +86,37 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
   onFollow,
   onHashtagClick,
   onOpenComments,
+  onOpenReactions,
 }) => {
+  const activePost = post || reel || {};
+  const activePostId = Number(
+    activePost?.id || activePost?.reel_id || activePost?.reelId || 0
+  );
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastTapRef = useRef<number>(0);
 
+  // Author details
+  const resolvedAuthor = author || activePost?.user || activePost?.author || { id: activePost?.user_id };
+  const authorId = safeUserId(resolvedAuthor);
+
   // Verification check - ONLY show if really verified, NEVER faked
   const isVerified = Boolean(
-    author?.is_verified ||
-    author?.verified ||
-    post?.user?.is_verified ||
-    post?.user?.verified ||
-    post?.author?.is_verified ||
-    post?.author?.verified ||
-    post?.is_verified ||
-    post?.verified
+    resolvedAuthor?.is_verified ||
+    resolvedAuthor?.verified ||
+    activePost?.user?.is_verified ||
+    activePost?.user?.verified ||
+    activePost?.author?.is_verified ||
+    activePost?.author?.verified ||
+    activePost?.is_verified ||
+    activePost?.verified
   );
-
-  // Author ID
-  const authorId = safeUserId(author || post?.user || post?.author || { id: post?.user_id });
 
   // Authentic story check - only show story ring/dots if user has active stories
   const userHasStory = useMemo(() => {
     if (typeof hasStory === 'boolean') return hasStory;
-    if (author?.has_story || author?.hasStory || post?.user?.has_story || post?.user?.hasStory) return true;
+    if (resolvedAuthor?.has_story || resolvedAuthor?.hasStory || activePost?.user?.has_story || activePost?.user?.hasStory) return true;
     if (Array.isArray(stories) && stories.length > 0) {
       return stories.some((s: any) => {
         const sUid = Number(s?.user_id ?? s?.user?.id ?? 0);
@@ -104,26 +124,26 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
       });
     }
     return false;
-  }, [hasStory, author, post, stories, authorId]);
+  }, [hasStory, resolvedAuthor, activePost, stories, authorId]);
 
   // Online status check
   const isOnline = Boolean(
-    author?.is_online ||
-    author?.isOnline ||
-    post?.user?.is_online ||
-    post?.user?.isOnline
+    resolvedAuthor?.is_online ||
+    resolvedAuthor?.isOnline ||
+    activePost?.user?.is_online ||
+    activePost?.user?.isOnline
   );
 
   // Video URL resolution
   const videoUrl =
-    post?.media_url ||
-    post?.video_url ||
-    (Array.isArray(post?.media_urls) ? post.media_urls.find((u: string) => typeof u === 'string' && u.match(/\.(mp4|webm|mov|m4v)/i)) : null) ||
-    post?.media_urls?.[0] ||
-    post?.meta?.video_url ||
+    activePost?.media_url ||
+    activePost?.video_url ||
+    (Array.isArray(activePost?.media_urls) ? activePost.media_urls.find((u: string) => typeof u === 'string' && u.match(/\.(mp4|webm|mov|m4v)/i)) : null) ||
+    activePost?.media_urls?.[0] ||
+    activePost?.meta?.video_url ||
     '';
 
-  const reelId = post?.reel_id || post?.reelId || (post?.type === 'reel' ? post?.id : null) || post?.id;
+  const reelId = activePostId;
 
   // Player states
   const [isPlaying, setIsPlaying] = useState(false);
@@ -132,29 +152,88 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
   const [showPlayIcon, setShowPlayIcon] = useState(false);
   const [showHeartBurst, setShowHeartBurst] = useState(false);
 
-  // Reels stats states
-  const postReactions = post?.reactions || {};
-  const initialLikes =
-    typeof post?.likes_count === 'number'
-      ? post.likes_count
-      : typeof post?.reaction_count === 'number'
-      ? post.reaction_count
-      : (postReactions?.like || 0) + (postReactions?.love || 0) + (postReactions?.heart || 0) || 0;
+  // Reaction states - matching standard posts
+  const initialReaction = (activePost?.my_reaction || activePost?.myReaction || activePost?.reaction || undefined) as ReactionType | undefined;
+  const [myReaction, setMyReaction] = useState<ReactionType | undefined>(initialReaction);
 
-  const [likesCount, setLikesCount] = useState<number>(initialLikes);
-  const [isLiked, setIsLiked] = useState<boolean>(
-    Boolean(
-      post?.my_reaction === 'love' ||
-      post?.my_reaction === 'like' ||
-      post?.is_liked ||
-      post?.has_reacted
+  const initialReactionCount = Number(
+    activePost?.reactions_count ??
+    activePost?.reaction_count ??
+    activePost?.likes_count ??
+    (Array.isArray(activePost?.reactions) ? activePost.reactions.length : 0)
+  );
+  const [reactionCount, setReactionCount] = useState<number>(initialReactionCount);
+  const [showReactionsSheet, setShowReactionsSheet] = useState(false);
+
+  // Sync state if activePost changes (e.g. on feed re-render or refresh)
+  useEffect(() => {
+    if (activePost?.my_reaction !== undefined) {
+      setMyReaction(activePost.my_reaction || undefined);
+    }
+    const count = Number(
+      activePost?.reactions_count ??
+      activePost?.reaction_count ??
+      activePost?.likes_count ??
+      (Array.isArray(activePost?.reactions) ? activePost.reactions.length : 0)
+    );
+    setReactionCount(count);
+  }, [
+    activePost?.my_reaction,
+    activePost?.myReaction,
+    activePost?.reaction,
+    activePost?.reactions_count,
+    activePost?.reaction_count,
+    activePost?.likes_count,
+    activePost?.reactions,
+  ]);
+
+  const [sharesCount, setSharesCount] = useState<number>(
+    Number(activePost?.shares ?? activePost?.shares_count ?? 0)
+  );
+  const [commentsCount, setCommentsCount] = useState<number>(
+    Number(
+      activePost?.comments_count ??
+      activePost?.comment_count ??
+      (Array.isArray(activePost?.comments) ? activePost.comments.length : 0)
     )
   );
 
-  const [sharesCount, setSharesCount] = useState<number>(post?.shares || post?.shares_count || 0);
-  const [commentsCount, setCommentsCount] = useState<number>(
-    post?.comments_count || (Array.isArray(post?.comments) ? post.comments.length : 0)
-  );
+  // Sync shares and comments count if activePost updates
+  useEffect(() => {
+    if (activePost?.shares !== undefined || activePost?.shares_count !== undefined) {
+      setSharesCount(Number(activePost?.shares ?? activePost?.shares_count ?? 0));
+    }
+    if (activePost?.comments_count !== undefined || activePost?.comments !== undefined) {
+      setCommentsCount(
+        Number(
+          activePost?.comments_count ??
+          activePost?.comment_count ??
+          (Array.isArray(activePost?.comments) ? activePost.comments.length : 0)
+        )
+      );
+    }
+  }, [activePost?.shares, activePost?.shares_count, activePost?.comments_count, activePost?.comments]);
+
+  // Reaction emojis and summary text (identical to normal post)
+  const reactionsArr = Array.isArray(activePost?.reactions) ? activePost.reactions : [];
+  const reactionsPreview = Array.isArray(activePost?.reactions_preview) ? activePost.reactions_preview : [];
+  const combinedReactions = reactionsArr.length > 0 ? reactionsArr : reactionsPreview;
+
+  const emojiList = useMemo(() => {
+    return topReactionEmojis(combinedReactions, 3);
+  }, [combinedReactions]);
+
+  const reactorName = useMemo(() => {
+    return (
+      activePost?.reactor_name ||
+      activePost?.reactorName ||
+      pickStableReactorName(activePostId, combinedReactions, users)
+    );
+  }, [activePost?.reactor_name, activePost?.reactorName, activePostId, combinedReactions, users]);
+
+  const reactionText = useMemo(() => {
+    return formatReactionText(reactionCount, reactorName);
+  }, [reactionCount, reactorName]);
 
   // Discuss modal & comments state
   const [showDiscussModal, setShowDiscussModal] = useState(false);
@@ -165,12 +244,12 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
 
   // Caption expand state
   const [isCaptionExpanded, setIsCaptionExpanded] = useState(false);
-  const isSaved = useIsPostSaved(reelId || post?.id);
+  const isSaved = useIsPostSaved(reelId || activePost?.id);
   const [showShareToast, setShowShareToast] = useState(false);
 
-  const authorName = author?.name || post?.user?.name || post?.author_name || 'Creator';
-  const authorUsername = author?.username || post?.user?.username || authorName.toLowerCase().replace(/\s+/g, '_');
-  const authorAvatar = avatarFrom(author || post?.user);
+  const authorName = resolvedAuthor?.name || activePost?.user?.name || activePost?.author_name || 'Creator';
+  const authorUsername = resolvedAuthor?.username || activePost?.user?.username || authorName.toLowerCase().replace(/\s+/g, '_');
+  const authorAvatar = avatarFrom(resolvedAuthor || activePost?.user);
 
   // Unique video ID for global single-playback coordination
   const cardVideoId = useMemo(() => {
@@ -290,9 +369,7 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
   const handleDoubleTapLike = () => {
     setShowHeartBurst(true);
     setTimeout(() => setShowHeartBurst(false), 900);
-    if (!isLiked) {
-      handleLike();
-    }
+    handleReact('love');
   };
 
   // Toggle audio mute
@@ -306,55 +383,68 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
   };
 
   // ==========================================
-  // NORMAL POST ENDPOINT: REACT / LIKE
+  // NORMAL POST ENDPOINT: REACT (/api/posts/[id]/react)
   // ==========================================
-  const handleLike = async (e?: React.MouseEvent) => {
-    e?.stopPropagation();
+  const handleReact = async (type: ReactionType) => {
     if (!currentUser) {
-      alert('Please log in to like this video');
+      alert('Please log in to react');
       return;
     }
 
-    const nextLiked = !isLiked;
-    setIsLiked(nextLiked);
-    setLikesCount((prev) => (nextLiked ? prev + 1 : Math.max(0, prev - 1)));
+    const prevReaction = myReaction;
+    const prevCount = reactionCount;
 
-    const activePostId = Number(post?.id || reelId);
+    const isTogglingOff = prevReaction === type;
+    const nextReaction: ReactionType | undefined = isTogglingOff ? undefined : type;
+    const nextCount = isTogglingOff
+      ? Math.max(0, prevCount - 1)
+      : prevReaction
+      ? prevCount
+      : prevCount + 1;
 
-    // Optimistic trigger to timeline post reaction
+    setMyReaction(nextReaction);
+    setReactionCount(nextCount);
+
     if (onReact) {
-      onReact(activePostId, nextLiked ? 'love' : null);
+      try {
+        onReact(activePost, type);
+      } catch {
+        (onReact as any)(activePostId, type);
+      }
+      return;
     }
 
     try {
       // Standard post react endpoint: /api/posts/${postId}/react
-      await apiFetch(`/api/posts/${activePostId}/react`, {
+      const res = await apiFetch(`/api/posts/${activePostId}/react`, {
         method: 'POST',
         body: JSON.stringify({
           user_id: currentUser.id,
-          type: nextLiked ? 'love' : 'like',
+          type: type,
           post_id: activePostId,
         }),
-      }).catch(async () => {
-        // Fallback to reels reaction endpoint if needed
-        await apiFetch(`/api/reels/${activePostId}/react`, {
-          method: 'POST',
-          body: JSON.stringify({
-            user_id: currentUser.id,
-            reaction: nextLiked ? 'love' : 'like',
-          }),
-        }).catch(() => {});
       });
+
+      if (res) {
+        if (typeof res.reactions_count === 'number') {
+          setReactionCount(res.reactions_count);
+        }
+        if (res.my_reaction !== undefined) {
+          setMyReaction(res.my_reaction || undefined);
+        }
+      }
     } catch (err) {
       console.warn('Post react endpoint error:', err);
+      // rollback on error
+      setMyReaction(prevReaction);
+      setReactionCount(prevCount);
     }
   };
 
   // ==========================================
-  // NORMAL POST ENDPOINT: DISCUSS / COMMENTS
+  // NORMAL POST ENDPOINT: DISCUSS / COMMENTS (/api/posts/[id]/comments)
   // ==========================================
-  const fetchReelComments = useCallback(async () => {
-    const activePostId = Number(post?.id || reelId);
+  const fetchVideoComments = useCallback(async () => {
     if (!activePostId) return;
 
     setIsLoadingComments(true);
@@ -368,28 +458,21 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
       } else if (Array.isArray(data?.comments)) {
         setComments(data.comments);
         setCommentsCount(data.comments.length);
-      } else {
-        const fallback = await apiFetch(`/api/reel-comments?reel_id=${activePostId}`);
-        const arr = Array.isArray(fallback) ? fallback : Array.isArray(fallback?.comments) ? fallback.comments : [];
-        if (arr.length > 0) {
-          setComments(arr);
-          setCommentsCount(arr.length);
-        }
       }
     } catch (err) {
       console.warn('Failed to load post comments for video:', err);
     } finally {
       setIsLoadingComments(false);
     }
-  }, [post?.id, reelId, currentUser?.id]);
+  }, [activePostId, currentUser?.id]);
 
   const handleOpenDiscuss = (e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (onOpenComments) {
-      onOpenComments(post);
+      onOpenComments(activePost);
     } else {
       setShowDiscussModal(true);
-      fetchReelComments();
+      fetchVideoComments();
     }
   };
 
@@ -403,7 +486,6 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
     }
 
     setIsSubmittingComment(true);
-    const activePostId = Number(post?.id || reelId);
 
     // Optimistic comment
     const tempComment: ReelComment = {
@@ -411,7 +493,7 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
       user_id: currentUser.id,
       text,
       created_at: new Date().toISOString(),
-      name: currentUser.name || 'You',
+      name: currentUser.name || currentUser.username || 'You',
       username: currentUser.username || 'you',
       profile_image_url: avatarFrom(currentUser),
     };
@@ -421,8 +503,8 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
     setCommentText('');
 
     try {
-      // Standard post comment endpoint: /api/posts/${postId}/comment
-      const res = await apiFetch(`/api/posts/${activePostId}/comment`, {
+      // Standard post comments endpoint: /api/posts/${postId}/comments
+      const res = await apiFetch(`/api/posts/${activePostId}/comments`, {
         method: 'POST',
         body: JSON.stringify({
           post_id: activePostId,
@@ -430,11 +512,11 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
           text,
         }),
       }).catch(async () => {
-        // Fallback to reel comments
-        return await apiFetch('/api/reel-comments', {
+        // Fallback to /api/posts/${postId}/comment
+        return await apiFetch(`/api/posts/${activePostId}/comment`, {
           method: 'POST',
           body: JSON.stringify({
-            reel_id: activePostId,
+            post_id: activePostId,
             user_id: currentUser.id,
             text,
           }),
@@ -455,16 +537,15 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
   };
 
   // ==========================================
-  // NORMAL POST ENDPOINT: SHARE
+  // NORMAL POST ENDPOINT: SHARE (/api/posts/[id]/share)
   // ==========================================
   const handleShare = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
-    const activePostId = Number(post?.id || reelId);
     const nextCount = sharesCount + 1;
     setSharesCount(nextCount);
 
     if (onShare) {
-      onShare(post.id, nextCount);
+      onShare(activePostId, nextCount);
     }
 
     // Call standard post share endpoint: /api/posts/${postId}/share
@@ -472,13 +553,11 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
       if (currentUser?.id) {
         await apiFetch(`/api/posts/${activePostId}/share`, {
           method: 'POST',
-          body: JSON.stringify({ destination: 'feed', user_id: currentUser.id, post_id: activePostId }),
-        }).catch(async () => {
-          // Fallback to reels share
-          await apiFetch(`/api/reels/${activePostId}/share`, {
-            method: 'POST',
-            body: JSON.stringify({ user_id: currentUser.id }),
-          }).catch(() => {});
+          body: JSON.stringify({
+            destination: 'feed',
+            user_id: currentUser.id,
+            post_id: activePostId,
+          }),
         });
       }
     } catch (err) {
@@ -491,7 +570,7 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
       try {
         await navigator.share({
           title: `${authorName} on UNERA`,
-          text: post.content || 'Check out this video on UNERA!',
+          text: activePost.content || 'Check out this video on UNERA!',
           url: shareUrl,
         });
         return;
@@ -722,99 +801,122 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
         </div>
       </div>
 
-      {/* 3. INSTAGRAM ACTION BAR (Heart, Comment, Share, Save) */}
-      <div className="px-3.5 pt-3 pb-1">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            {/* 1. Like / React */}
-            <button
-              onClick={handleLike}
-              className="flex items-center gap-1.5 text-white transition-transform active:scale-125 focus:outline-none p-1 rounded-lg hover:bg-[#1E293B]/60"
-              aria-label={isLiked ? 'Unlike' : 'Like'}
-            >
-              <i
-                className={`fas fa-heart text-[22px] transition-colors ${
-                  isLiked ? 'text-red-500' : 'text-[#F8FAFC] hover:text-red-400'
-                }`}
-              ></i>
-              {likesCount > 0 && (
-                <span className="text-[14px] font-semibold text-[#F8FAFC]">
-                  {formatCount(likesCount)}
+      {/* Reaction Summary & Counts Bar (Identical to Standard Posts) */}
+      {(reactionCount > 0 || commentsCount > 0 || sharesCount > 0) && (
+        <div className="px-3.5 pt-2.5 pb-1 flex items-center justify-between text-xs text-[#94A3B8] border-b border-[#1E293B]/50">
+          <button
+            type="button"
+            onClick={() => {
+              if (onOpenReactions) {
+                onOpenReactions(activePost);
+              } else {
+                setShowReactionsSheet(true);
+              }
+            }}
+            className="flex items-center gap-1.5 hover:underline text-left cursor-pointer group"
+          >
+            {reactionCount > 0 && (
+              <>
+                <span className="flex -space-x-1 items-center">
+                  {emojiList.map((emoji, idx) => (
+                    <span
+                      key={idx}
+                      className="w-4 h-4 rounded-full flex items-center justify-center text-[11px] ring-1 ring-[#0F172A] bg-[#1E293B]"
+                    >
+                      {emoji}
+                    </span>
+                  ))}
                 </span>
-              )}
-            </button>
+                <span className="font-medium text-[#CBD5E1] group-hover:text-[#F8FAFC]">
+                  {reactionText}
+                </span>
+              </>
+            )}
+          </button>
+
+          <div className="flex items-center gap-3 font-medium">
+            {commentsCount > 0 && (
+              <button
+                type="button"
+                onClick={handleOpenDiscuss}
+                className="hover:underline hover:text-[#CBD5E1]"
+              >
+                {formatCount(commentsCount)} {commentsCount === 1 ? 'Discussion' : 'Discussions'}
+              </button>
+            )}
+            {sharesCount > 0 && (
+              <span>
+                {formatCount(sharesCount)} {sharesCount === 1 ? 'Share' : 'Shares'}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 3. ACTION BAR (React with ReactionButton dock, Discuss, Share, Save) */}
+      <div className="px-3.5 pt-2 pb-1">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            {/* 1. React Button with Animated Dock */}
+            <ReactionButton
+              currentUserReactions={myReaction}
+              reactionCount={reactionCount}
+              onReact={handleReact}
+              isGuest={!currentUser}
+              postId={activePostId}
+            />
 
             {/* 2. Discuss / Comment */}
             <button
               onClick={handleOpenDiscuss}
-              className="flex items-center gap-1.5 text-[#F8FAFC] hover:text-[#38BDF8] transition-colors focus:outline-none p-1 rounded-lg hover:bg-[#1E293B]/60"
+              className="flex items-center gap-1.5 text-[#F8FAFC] hover:text-[#38BDF8] transition-colors focus:outline-none p-1.5 rounded-lg hover:bg-[#1E293B]/60"
               aria-label="Discuss & Comments"
             >
-              <i className="far fa-comment text-[22px]"></i>
-              {commentsCount > 0 && (
-                <span className="text-[14px] font-semibold text-[#F8FAFC]">
-                  {formatCount(commentsCount)}
-                </span>
-              )}
+              <i className="far fa-comment text-[20px]"></i>
+              <span className="text-[13px] font-semibold text-[#F8FAFC]">Discuss</span>
             </button>
 
             {/* 3. Share */}
             <button
               onClick={handleShare}
-              className="flex items-center gap-1.5 text-[#F8FAFC] hover:text-[#38BDF8] transition-transform active:scale-110 focus:outline-none p-1 rounded-lg hover:bg-[#1E293B]/60"
+              className="flex items-center gap-1.5 text-[#F8FAFC] hover:text-[#38BDF8] transition-transform active:scale-110 focus:outline-none p-1.5 rounded-lg hover:bg-[#1E293B]/60"
               aria-label="Share reel"
             >
-              <i className="far fa-paper-plane text-[21px]"></i>
-              {sharesCount > 0 && (
-                <span className="text-[14px] font-semibold text-[#F8FAFC]">
-                  {formatCount(sharesCount)}
-                </span>
-              )}
+              <i className="far fa-paper-plane text-[19px]"></i>
+              <span className="text-[13px] font-semibold text-[#F8FAFC]">Share</span>
             </button>
           </div>
 
           {/* Bookmark / Save */}
           <button
-            onClick={() => toggleSavePost(post, true)}
-            className="flex items-center justify-center p-1 rounded-lg hover:bg-[#1E293B]/60 transition-transform active:scale-110 focus:outline-none"
+            onClick={() => toggleSavePost(activePost, true)}
+            className="flex items-center justify-center p-1.5 rounded-lg hover:bg-[#1E293B]/60 transition-transform active:scale-110 focus:outline-none"
             aria-label={isSaved ? 'Remove from saved' : 'Save'}
             title={isSaved ? 'Saved' : 'Save post'}
           >
             <i
               className={`${
                 isSaved ? 'fas text-[#F59E0B]' : 'far text-[#F8FAFC] hover:text-[#F59E0B]'
-              } fa-bookmark text-[21px] transition-colors`}
+              } fa-bookmark text-[19px] transition-colors`}
             ></i>
           </button>
         </div>
 
-        {/* Likes Count */}
-        <div className="mt-2 text-[14px] font-bold text-[#F8FAFC]">
-          {likesCount > 0 ? (
-            <span>
-              {likesCount.toLocaleString()}{' '}
-              {likesCount === 1 ? 'like' : 'likes'}
-            </span>
-          ) : (
-            <span className="text-[#94A3B8] font-normal text-xs">Be the first to like this</span>
-          )}
-        </div>
-
         {/* Caption & Hashtags */}
-        {post.content && (
-          <div className="mt-1 text-[15px] leading-snug">
+        {activePost.content && (
+          <div className="mt-2 text-[15px] leading-snug">
             <span
-              className="font-bold text-[21px] text-[#F8FAFC] mr-1.5 cursor-pointer hover:underline"
+              className="font-bold text-[15px] text-[#F8FAFC] mr-1.5 cursor-pointer hover:underline"
               onClick={() => onProfileClick(authorId)}
             >
               {authorName}
             </span>
             <span className="text-[#E2E8F0]">
               {isCaptionExpanded
-                ? renderFormattedText(post.content)
-                : renderFormattedText(post.content.slice(0, 110))}
+                ? renderFormattedText(activePost.content)
+                : renderFormattedText(activePost.content.slice(0, 110))}
             </span>
-            {post.content.length > 110 && (
+            {activePost.content.length > 110 && (
               <button
                 onClick={() => setIsCaptionExpanded(!isCaptionExpanded)}
                 className="text-[#94A3B8] hover:text-white text-xs ml-1 font-medium"
@@ -825,13 +927,13 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
           </div>
         )}
 
-        {/* View all comments link */}
+        {/* View all discussions link */}
         {commentsCount > 0 && (
           <button
             onClick={handleOpenDiscuss}
-            className="mt-1 text-[#CBD5E1] hover:text-[#F8FAFC] text-[20.5px] font-semibold block transition-colors"
+            className="mt-1.5 text-[#94A3B8] hover:text-[#F8FAFC] text-[13px] font-medium block transition-colors"
           >
-            View all {commentsCount} comments
+            View all {commentsCount} discussions
           </button>
         )}
 
@@ -844,16 +946,16 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
           />
           <input
             type="text"
-            placeholder="Add a comment…"
+            placeholder="Add a discussion…"
             value={commentText}
             onChange={(e) => setCommentText(e.target.value)}
-            className="bg-transparent flex-1 text-[16px] text-[#F8FAFC] placeholder-[#64748B] outline-none"
+            className="bg-transparent flex-1 text-[14px] text-[#F8FAFC] placeholder-[#64748B] outline-none"
           />
           {commentText.trim() && (
             <button
               type="submit"
               disabled={isSubmittingComment}
-              className="text-[#1877F2] hover:text-[#38BDF8] text-[16px] font-bold transition-colors disabled:opacity-50"
+              className="text-[#1877F2] hover:text-[#38BDF8] text-[14px] font-bold transition-colors disabled:opacity-50"
             >
               Post
             </button>
@@ -867,6 +969,17 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
           <i className="fas fa-check-circle"></i>
           <span>Link copied to clipboard! Ready to share.</span>
         </div>
+      )}
+
+      {/* Reactions Sheet */}
+      {showReactionsSheet && (
+        <ReactionsSheet
+          isOpen={showReactionsSheet}
+          onClose={() => setShowReactionsSheet(false)}
+          post={activePost}
+          onProfileClick={onProfileClick}
+          onOpenComments={handleOpenDiscuss}
+        />
       )}
 
       {/* ========================================== */}

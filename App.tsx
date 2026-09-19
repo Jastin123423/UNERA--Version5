@@ -930,28 +930,84 @@ const normalizePost = (p: any): PostType => {
   const resolvedId = safeNumber(p?.id ?? p?.post_id ?? p?.postId ?? p?.postID);
 
   // Handle event posts specifically
-  if (p?.type === 'event' || p?.meta?.kind === 'event') {
+  if (
+    p?.type === 'event' ||
+    p?.post_type === 'event' ||
+    p?.item_type === 'event' ||
+    p?.source === 'event' ||
+    p?.meta?.kind === 'event' ||
+    String(p?.feed_key || '').startsWith('event:') ||
+    (p?.event_id && !p?.post_id && !p?.group_post_id)
+  ) {
+    const commentsCount = safeNumber(
+      p?.comments_count ??
+      p?.comment_count ??
+      (Array.isArray(p?.comments) ? p.comments.length : 0) ??
+      p?.meta?.comments_count ??
+      0
+    );
+    const reactionsCount = safeNumber(
+      p?.reactions_count ??
+      p?.reactionsCount ??
+      p?.likesCount ??
+      p?.likes_count ??
+      (Array.isArray(p?.reactions) ? p.reactions.length : 0) ??
+      p?.meta?.reactions_count ??
+      0
+    );
+    const sharesCount = safeNumber(
+      p?.shares_count ??
+      p?.shares ??
+      p?.share_count ??
+      p?.meta?.shares_count ??
+      0
+    );
+    const myReaction = p?.my_reaction ?? p?.myReaction ?? p?.meta?.my_reaction ?? null;
+
     return {
       ...p,
       id: resolvedId,
       user_id: safeNumber(p?.user_id),
       content: safeString(p?.content),
       type: 'event',
-      event_id: p?.event_id || p?.meta?.event_id,
-      media_url: p?.meta?.event?.cover_url || mediaUrl,
+      item_type: 'event',
+      source: 'event',
+      post_type: 'event',
+      kind: 'event',
+      event_id: p?.event_id || p?.meta?.event_id || resolvedId,
+      media_url: p?.meta?.event?.cover_url || p?.cover_url || mediaUrl,
       media_type: 'image',
       feed_key: p?.feed_key || `event:${resolvedId}`,
+      reactions: safeArray(p?.reactions),
+      reactions_preview: safeArray(p?.reactions_preview),
+      reactions_by_type: safeArray(p?.reactions_by_type),
+      comments: safeArray(p?.comments),
+      comments_count: commentsCount,
+      reactions_count: reactionsCount,
+      reactionsCount,
+      likesCount: reactionsCount,
+      shares: sharesCount,
+      shares_count: sharesCount,
+      my_reaction: myReaction,
+      myReaction,
+      views: safeNumber(p?.views),
+      reactor_name: p?.reactor_name ?? p?.reactorName ?? p?.meta?.reactor_name ?? '',
       meta: {
         kind: 'event',
-        event_id: p?.event_id || p?.meta?.event_id,
+        type: 'event',
+        event_id: p?.event_id || p?.meta?.event_id || resolvedId,
+        comments_count: commentsCount,
+        reactions_count: reactionsCount,
+        shares_count: sharesCount,
+        my_reaction: myReaction,
         event: p?.meta?.event || {
-          id: p?.event_id,
-          title: p?.meta?.event?.title || p?.title,
+          id: p?.event_id || resolvedId,
+          title: p?.meta?.event?.title || p?.title || p?.content,
           description: p?.meta?.event?.description || p?.description,
-          date: p?.meta?.event?.date,
+          date: p?.meta?.event?.date || p?.event_date,
           time: p?.meta?.event?.time,
-          location: p?.meta?.event?.location,
-          cover_url: p?.meta?.event?.cover_url || mediaUrl,
+          location: p?.meta?.event?.location || p?.location,
+          cover_url: p?.meta?.event?.cover_url || p?.cover_url || mediaUrl,
           attendees: p?.meta?.event?.attendees || [],
           interested: p?.meta?.event?.interested || [],
         }
@@ -2142,6 +2198,16 @@ const apiFetch = async (url: string, options: RequestInit = {}) => {
     ...(options.headers || {}),
   };
 
+  try {
+    const rawUser = localStorage.getItem('social_platform_current_user') || localStorage.getItem('unera_user');
+    if (rawUser) {
+      const u = JSON.parse(rawUser);
+      if (u?.id && !(headers as any)['x-user-id']) {
+        (headers as any)['x-user-id'] = String(u.id);
+      }
+    }
+  } catch {}
+
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
   if (!isFormData) headers['Content-Type'] = (headers['Content-Type'] as string) || 'application/json';
 
@@ -2382,8 +2448,8 @@ const mergeFeed = (prev: PostType[], incoming: PostType[]): PostType[] => {
         ...p,
         reactions: (p as any).reactions?.length ? (p as any).reactions : (existing as any).reactions,
         reactions_count: (p as any).reactions_count !== undefined ? (p as any).reactions_count : (existing as any).reactions_count,
-        my_reaction: (p as any).my_reaction !== undefined ? (p as any).my_reaction : (existing as any).my_reaction,
-        myReaction: (p as any).myReaction !== undefined ? (p as any).myReaction : (existing as any).myReaction,
+        my_reaction: (p as any).my_reaction !== undefined && (p as any).my_reaction !== null ? (p as any).my_reaction : (existing as any).my_reaction,
+        myReaction: (p as any).myReaction !== undefined && (p as any).myReaction !== null ? (p as any).myReaction : (existing as any).myReaction,
         shares: Math.max((existing as any).shares || 0, (p as any).shares || 0, (p as any).shares_count || 0),
         shares_count: Math.max((existing as any).shares_count || 0, (p as any).shares_count || 0, (p as any).shares || 0),
         comments_count: Math.max((existing as any).comments_count || 0, (p as any).comments_count || 0),
@@ -6234,10 +6300,23 @@ const createReel = useCallback(async (
       )
     );
 
+    setPosts(prev =>
+      safeArray(prev).map(post =>
+        (post.id === reelId || post.reel_id === reelId)
+          ? applyOptimisticReaction(post, getFeedKey(post), reactionType, currentUser.id)
+          : post
+      )
+    );
+
     try {
-      await apiFetch(`/api/reels/${reelId}/react`, {
+      await apiFetch(`/api/posts/${reelId}/react`, {
         method: 'POST',
-        body: JSON.stringify({ type: reactionType, user_id: currentUser.id }),
+        body: JSON.stringify({ type: reactionType, user_id: currentUser.id, post_id: reelId }),
+      }).catch(async () => {
+        return await apiFetch(`/api/reels/${reelId}/react`, {
+          method: 'POST',
+          body: JSON.stringify({ type: reactionType, user_id: currentUser.id }),
+        });
       });
       
     } catch (error) {
@@ -6475,9 +6554,14 @@ const createReel = useCallback(async (
     if (!currentUser) return;
 
     try {
-      await apiFetch(`/api/reels/${reelId}/share`, {
+      await apiFetch(`/api/posts/${reelId}/share`, {
         method: 'POST',
-        body: JSON.stringify({ user_id: currentUser.id, destination: type }),
+        body: JSON.stringify({ user_id: currentUser.id, destination: type, post_id: reelId }),
+      }).catch(async () => {
+        return await apiFetch(`/api/reels/${reelId}/share`, {
+          method: 'POST',
+          body: JSON.stringify({ user_id: currentUser.id, destination: type }),
+        });
       });
       
       setReels(prev => 
@@ -6485,6 +6569,14 @@ const createReel = useCallback(async (
           reel.id === reelId 
             ? { ...reel, shares: (reel.shares || 0) + 1 }
             : reel
+        )
+      );
+
+      setPosts(prev =>
+        safeArray(prev).map(post =>
+          (post.id === reelId || post.reel_id === reelId)
+            ? { ...post, shares: (post.shares || 0) + 1, shares_count: (post.shares_count || 0) + 1 }
+            : post
         )
       );
       
@@ -9613,11 +9705,16 @@ const reactToFeedItem = useCallback(async (item: any, type: ReactionType) => {
       const serverCount = safeNumber(data.reactions_count, 0);
 
       const applyServerTruth = (p: any) => {
+        let isMatch = false;
         try {
-          if (getFeedKey(p) !== identity) return p;
-        } catch {
-          if (Number(p?.id) !== itemId) return p;
+          if (getFeedKey(p) === identity) isMatch = true;
+        } catch {}
+        if (!isMatch) {
+          const pid = Number(p?.id);
+          const peid = Number((p as any)?.event_id);
+          if ((itemId && pid === itemId) || (itemId && peid === itemId)) isMatch = true;
         }
+        if (!isMatch) return p;
 
         const prevArr = safeArray<any>(p?.reactions);
         const withoutMe = prevArr.filter((r: any) => Number(r?.user_id) !== meId);
@@ -9746,18 +9843,30 @@ const createComment = useCallback(async (
     return null;
   }
 
+  let targetItem = item;
+  if (typeof item === 'number' || typeof item === 'string') {
+    const numId = Number(item);
+    targetItem = 
+      (commentPostSnapshot && (Number(commentPostSnapshot.id) === numId || Number((commentPostSnapshot as any).event_id) === numId) ? commentPostSnapshot : null) ||
+      safeArray(posts).find(p => Number(p.id) === numId || Number((p as any).event_id) === numId) ||
+      safeArray(profilePosts).find(p => Number(p.id) === numId || Number((p as any).event_id) === numId) ||
+      { id: numId };
+  } else if (!item && commentPostSnapshot) {
+    targetItem = commentPostSnapshot;
+  }
+
   let identity = '';
   let type = 'post';
   let id = 0;
   
   try {
-    identity = getFeedKey(item);
-    type = getFeedItemType(item);
-    id = getFeedItemId(item);
+    identity = getFeedKey(targetItem);
+    type = getFeedItemType(targetItem);
+    id = getFeedItemId(targetItem);
   } catch {
-    identity = `post:${item?.id}`;
+    identity = `post:${targetItem?.id}`;
     type = 'post';
-    id = Number(item?.id ?? 0);
+    id = Number(targetItem?.id ?? 0);
   }
 
   try {
@@ -9865,17 +9974,24 @@ const createComment = useCallback(async (
     // Update posts state with new comment using identity
     const updatePostsWithComment = (postsList: any[]) => {
       return postsList.map(post => {
+        let isMatch = false;
         try {
-          if (getFeedKey(post) !== identity) return post;
-        } catch {
-          if (Number(post?.id) !== id) return post;
+          if (getFeedKey(post) === identity) isMatch = true;
+        } catch {}
+        if (!isMatch) {
+          const pid = Number(post?.id);
+          const peid = Number((post as any)?.event_id);
+          if ((id && pid === id) || (id && peid === id)) isMatch = true;
         }
+        if (!isMatch) return post;
         
         const existingComments = safeArray((post as any).comments);
+        const nextCount = safeNumber((post as any).comments_count) + 1;
         return {
           ...post,
           comments: [newComment, ...existingComments],
-          comments_count: safeNumber((post as any).comments_count) + 1,
+          comments_count: nextCount,
+          comment_count: nextCount,
         };
       });
     };
@@ -10377,14 +10493,15 @@ const openEvent = useCallback((eventId: string | number) => {
 }, [navigateTo]);          
 
   const activePost = useMemo(() => {
-  if (!activeCommentsIdentity) return null;
-  return (
-    commentPostSnapshot || 
-    posts.find((p) => String(p.id) === String(activeCommentsIdentity.id)) ||
-    profilePosts.find((p) => String(p.id) === String(activeCommentsIdentity.id)) ||
-    null
-  );
-}, [activeCommentsIdentity, commentPostSnapshot, posts, profilePosts]);        
+    if (!activeCommentsIdentity) return null;
+    const targetId = String(activeCommentsIdentity.id);
+    return (
+      commentPostSnapshot || 
+      posts.find((p) => String(p.id) === targetId || String((p as any).event_id) === targetId) ||
+      profilePosts.find((p) => String(p.id) === targetId || String((p as any).event_id) === targetId) ||
+      null
+    );
+  }, [activeCommentsIdentity, commentPostSnapshot, posts, profilePosts]);        
 
 
   
@@ -11686,7 +11803,7 @@ return (
     onReact={(post, type) => reactToFeedItem(post, type)}
     onShare={(id, newShareCount) => {
       setPosts(prev => prev.map(p => 
-        Number(p.id) === id ? { ...p, shares: newShareCount } as any : p
+        (Number(p.id) === id || Number((p as any).event_id) === id) ? { ...p, shares: newShareCount, shares_count: newShareCount } as any : p
       ));
     }}
     onVideoClick={handleVideoClick}

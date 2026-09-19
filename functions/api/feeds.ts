@@ -271,7 +271,9 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
 
     const url = new URL(request.url);
 
-    const userId = toInt(url.searchParams.get("userId"), 0);
+    const userId =
+      toInt(url.searchParams.get("userId"), 0) ||
+      toInt(request.headers.get("x-user-id"), 0);
     const reactionUserId = userId || 0;
 
     const limit = clamp(toInt(url.searchParams.get("limit"), 20), 1, 50);
@@ -823,10 +825,25 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
           ELSE ''
         END AS my_rsvp_status,
 
-        NULL AS type,
-        NULL AS post_type,
-        NULL AS kind,
-        NULL AS meta,
+        'event' AS type,
+        'event' AS post_type,
+        'event' AS kind,
+        json_object(
+          'kind', 'event',
+          'type', 'event',
+          'event_id', e.id,
+          'comments_count', (SELECT COUNT(*) FROM event_comments ec WHERE ec.event_id = e.id AND COALESCE(ec.is_deleted, 0) = 0),
+          'reactions_count', (SELECT COUNT(*) FROM event_reactions er WHERE er.event_id = e.id),
+          'shares_count', (SELECT COUNT(*) FROM event_shares es WHERE es.event_id = e.id),
+          'event', json_object(
+            'id', e.id,
+            'title', e.title,
+            'description', e.description,
+            'event_date', e.event_date,
+            'location', e.location,
+            'cover_url', e.cover_url
+          )
+        ) AS meta,
 
         NULL AS group_id,
         NULL AS group_name,
