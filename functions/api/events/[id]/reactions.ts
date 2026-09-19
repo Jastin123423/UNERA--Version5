@@ -80,6 +80,11 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env, params })
       .bind(eventId)
       .first<{ c: number }>();
 
+    const sharesRow = await env.DB
+      .prepare(`SELECT COUNT(*) AS c FROM event_shares WHERE event_id = ?`)
+      .bind(eventId)
+      .first<{ c: number }>();
+
     return json({
       success: true,
       reactions: (reactions ?? []).map((r: any) => ({
@@ -98,6 +103,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env, params })
       counts: countMap,
       my_reaction,
       comments_count: toNum(commentsRow?.c, 0),
+      shares_count: toNum(sharesRow?.c, 0),
     });
   } catch (err: any) {
     return json(

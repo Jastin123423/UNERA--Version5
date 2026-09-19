@@ -43,7 +43,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
     const bodyUserId = toNum(body.user_id, 0);
     const userId = headerUserId || bodyUserId;
 
-    const type = normalizeType(body.type);
+    const type = normalizeType(body.type || body.reaction);
 
     if (!eventId) return json({ success: false, error: "Invalid event id" }, 400);
     if (!userId)  return json({ success: false, error: "user_id required" }, 400);

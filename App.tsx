@@ -974,7 +974,9 @@ const normalizePost = (p: any): PostType => {
 
     reactions: safeArray(p?.reactions),
     comments: safeArray(p?.comments),
-    shares: safeNumber(p?.shares),
+    comments_count: safeNumber(p?.comments_count ?? p?.comment_count ?? (Array.isArray(p?.comments) ? p.comments.length : 0)),
+    shares: safeNumber(p?.shares ?? p?.shares_count),
+    shares_count: safeNumber(p?.shares_count ?? p?.shares),
     views: safeNumber(p?.views),
     visibility: p?.visibility ?? 'public',
     type:
@@ -995,6 +997,18 @@ const normalizePost = (p: any): PostType => {
     reactions_count: safeNumber(p?.reactions_count ?? p?.reactionsCount ?? p?.likesCount ?? 0),
     reactionsCount: safeNumber(p?.reactionsCount ?? p?.reactions_count ?? p?.likesCount ?? 0),
     likesCount: safeNumber(p?.likesCount ?? p?.reactions_count ?? p?.reactionsCount ?? 0),
+
+    reactor_name: p?.reactor_name ?? p?.reactorName ?? '',
+    reactions_preview: safeArray(p?.reactions_preview),
+    reactions_by_type: safeArray(p?.reactions_by_type),
+
+    // Event specific metadata preservation
+    item_type: p?.item_type ?? p?.source ?? (p?.event_id ? 'event' : 'post'),
+    source: p?.source ?? p?.item_type ?? (p?.event_id ? 'event' : 'post'),
+    event_id: p?.event_id ?? (p?.item_type === 'event' || p?.source === 'event' ? p?.id : undefined),
+    attending_count: safeNumber(p?.attending_count ?? p?.attendees_count),
+    interested_count: safeNumber(p?.interested_count),
+    my_rsvp_status: p?.my_rsvp_status ?? p?.user_rsvp_status ?? '',
 
     // ✅ IMPORTANT: Include feed_key for hybrid identification
     feed_key: p?.feed_key || `${p?.source || p?.item_type || p?.type || 'post'}:${resolvedId}`,
@@ -2353,28 +2367,36 @@ const authorFromFeedRow = (row: any): User => {
 };
 
 const mergeFeed = (prev: PostType[], incoming: PostType[]): PostType[] => {
-  const map = new Map<number, PostType>();
-  prev.forEach((p: any) => map.set(Number(p.id), p));
+  const map = new Map<string, PostType>();
+  prev.forEach((p: any) => {
+    const key = getFeedKey(p) || `${p?.source || p?.item_type || 'post'}:${p.id}`;
+    map.set(key, p);
+  });
 
   incoming.forEach((p: any) => {
-    const existing = map.get(Number(p.id));
+    const key = getFeedKey(p) || `${p?.source || p?.item_type || 'post'}:${p.id}`;
+    const existing = map.get(key);
     if (existing) {
-      map.set(Number(p.id), {
+      map.set(key, {
         ...existing,
         ...p,
-        reactions: (existing as any).reactions,
-        shares: Math.max((existing as any).shares || 0, (p as any).shares || 0),
+        reactions: (p as any).reactions?.length ? (p as any).reactions : (existing as any).reactions,
+        reactions_count: (p as any).reactions_count !== undefined ? (p as any).reactions_count : (existing as any).reactions_count,
+        my_reaction: (p as any).my_reaction !== undefined ? (p as any).my_reaction : (existing as any).my_reaction,
+        myReaction: (p as any).myReaction !== undefined ? (p as any).myReaction : (existing as any).myReaction,
+        shares: Math.max((existing as any).shares || 0, (p as any).shares || 0, (p as any).shares_count || 0),
+        shares_count: Math.max((existing as any).shares_count || 0, (p as any).shares_count || 0, (p as any).shares || 0),
         comments_count: Math.max((existing as any).comments_count || 0, (p as any).comments_count || 0),
       } as any);
     } else {
-      map.set(Number(p.id), p);
+      map.set(key, p);
     }
   });
 
-  const prevIds = new Set(prev.map((p: any) => Number(p.id)));
-  const newOnes = incoming.filter((p: any) => !prevIds.has(Number(p.id)));
+  const prevKeys = new Set(prev.map((p: any) => getFeedKey(p) || `${p?.source || p?.item_type || 'post'}:${p.id}`));
+  const newOnes = incoming.filter((p: any) => !prevKeys.has(getFeedKey(p) || `${p?.source || p?.item_type || 'post'}:${p.id}`));
 
-  return [...newOnes, ...prev.map((p: any) => map.get(Number(p.id))!).filter(Boolean)];
+  return [...newOnes, ...prev.map((p: any) => map.get(getFeedKey(p) || `${p?.source || p?.item_type || 'post'}:${p.id}`)!).filter(Boolean)];
 };
 
 const createFallbackUser = (): User => {
@@ -9864,7 +9886,7 @@ const createComment = useCallback(async (
       setProfilePosts(prev => updatePostsWithComment(safeArray(prev)));
     }
 
-    if (activeCommentsIdentity === identity && commentPostSnapshot) {
+    if (activeCommentsIdentity && commentPostSnapshot) {
       setCommentPostSnapshot(prev => {
         if (!prev) return prev;
         const existingComments = safeArray((prev as any).comments);
@@ -10137,7 +10159,7 @@ const refreshComments = useCallback(async (item: any) => {
     setProfilePosts(prev => updateCommentsInPosts(safeArray(prev)));
   }
   
-  if (activeCommentsIdentity === identity && commentPostSnapshot) {
+  if (activeCommentsIdentity && commentPostSnapshot) {
     setCommentPostSnapshot(prev => {
       if (!prev) return prev;
       return {

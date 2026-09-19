@@ -114,6 +114,11 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
         COALESCE(a.attendees_count, 0) AS attendees_count,
         COALESCE(i.interested_count, 0) AS interested_count,
 
+        (SELECT COUNT(*) FROM event_reactions er WHERE er.event_id = e.id) AS reactions_count,
+        (SELECT er.type FROM event_reactions er WHERE er.event_id = e.id AND er.user_id = ? LIMIT 1) AS my_reaction,
+        (SELECT COUNT(*) FROM event_comments ec WHERE ec.event_id = e.id AND COALESCE(ec.is_deleted,0) = 0) AS comments_count,
+        (SELECT COUNT(*) FROM event_shares es WHERE es.event_id = e.id) AS shares_count,
+
         CASE
           WHEN ua.event_id IS NOT NULL THEN 'going'
           WHEN ui.event_id IS NOT NULL THEN 'interested'
@@ -152,7 +157,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       LIMIT ? OFFSET ?
     `;
 
-    const eventsBinds = [userId, userId, ...binds, limit, offset];
+    const eventsBinds = [userId, userId, userId, ...binds, limit, offset];
 
     const evRes = await env.DB.prepare(eventsSql).bind(...eventsBinds).all();
     const rows = (evRes?.results || []) as any[];
@@ -175,6 +180,12 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       attendees_count: r.attendees_count ?? 0,
       interested_count: r.interested_count ?? 0,
       user_rsvp_status: (r.user_rsvp_status || "") as "" | "going" | "interested",
+
+      reactions_count: Number(r.reactions_count ?? 0),
+      my_reaction: r.my_reaction ?? null,
+      comments_count: Number(r.comments_count ?? 0),
+      shares_count: Number(r.shares_count ?? 0),
+      shares: Number(r.shares_count ?? 0),
 
       creator: {
         id: r.creator_user_id ?? r.creator_id,

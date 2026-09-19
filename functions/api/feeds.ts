@@ -711,7 +711,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
         e.title AS content,
         'public' AS visibility,
         0 AS views,
-        0 AS shares,
+        (SELECT COUNT(*) FROM event_shares es WHERE es.event_id = e.id) AS shares,
 
         CASE
           WHEN e.cover_url LIKE 'data:%' THEN NULL
@@ -738,14 +738,59 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
 
         NULL AS media_meta,
 
-        0 AS comments_count,
+        (SELECT COUNT(*) FROM event_comments ec WHERE ec.event_id = e.id AND COALESCE(ec.is_deleted,0) = 0) AS comments_count,
 
-        0 AS reactions_count,
-        NULL AS my_reaction,
+        (SELECT COUNT(*) FROM event_reactions er WHERE er.event_id = e.id) AS reactions_count,
+        (SELECT er.type FROM event_reactions er WHERE er.event_id = e.id AND er.user_id = ? LIMIT 1) AS my_reaction,
 
-        NULL AS reactor_name,
-        NULL AS reactions_preview,
-        NULL AS reactions_by_type,
+        (
+          SELECT COALESCE(u2.name, u2.username, '')
+          FROM event_reactions er2
+          JOIN users u2 ON u2.id = er2.user_id
+          WHERE er2.event_id = e.id
+          ORDER BY er2.created_at DESC, er2.id DESC
+          LIMIT 1
+        ) AS reactor_name,
+
+        (
+          SELECT json_group_array(
+            json_object(
+              'user_id', x.user_id,
+              'type', x.type,
+              'name', x.name,
+              'profile_image_url', x.profile_image_url
+            )
+          )
+          FROM (
+            SELECT
+              er3.user_id AS user_id,
+              LOWER(COALESCE(er3.type,'like')) AS type,
+              COALESCE(u3.name, u3.username, '') AS name,
+              CASE
+                WHEN u3.profile_image_url LIKE 'data:%' THEN NULL
+                WHEN length(u3.profile_image_url) > 300 THEN NULL
+                ELSE u3.profile_image_url
+              END AS profile_image_url
+            FROM event_reactions er3
+            LEFT JOIN users u3 ON u3.id = er3.user_id
+            WHERE er3.event_id = e.id
+            ORDER BY er3.created_at DESC, er3.id DESC
+            LIMIT 30
+          ) x
+        ) AS reactions_preview,
+
+        (
+          SELECT json_group_array(
+            json_object('type', t.type, 'count', t.c)
+          )
+          FROM (
+            SELECT LOWER(COALESCE(type,'like')) AS type, COUNT(*) AS c
+            FROM event_reactions
+            WHERE event_id = e.id
+            GROUP BY LOWER(COALESCE(type,'like'))
+            ORDER BY c DESC
+          ) t
+        ) AS reactions_by_type,
 
         NULL AS video_url,
         NULL AS caption,
@@ -1405,7 +1450,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     const freshEventsRes = await env.DB.prepare(
       `${baseSelectEvents} ${whereEventsSql} ORDER BY e.created_at DESC LIMIT ?`
     )
-      .bind(reactionUserId, reactionUserId, ...bindsEvents, freshCount)
+      .bind(reactionUserId, reactionUserId, reactionUserId, ...bindsEvents, freshCount)
       .all();
     const freshEvents = Array.isArray(freshEventsRes?.results)
       ? freshEventsRes.results
@@ -1478,7 +1523,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       const exploreEventsRes = await env.DB.prepare(
         `${baseSelectEvents} ${whereEventsSql} ORDER BY RANDOM() LIMIT ?`
       )
-        .bind(reactionUserId, reactionUserId, ...bindsEvents, exploreCount)
+        .bind(reactionUserId, reactionUserId, reactionUserId, ...bindsEvents, exploreCount)
         .all();
       exploreEvents = Array.isArray(exploreEventsRes?.results)
         ? exploreEventsRes.results

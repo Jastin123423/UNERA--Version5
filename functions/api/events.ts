@@ -79,6 +79,18 @@ async function handleGetAllEvents(env: Env) {
       `SELECT event_id, user_id FROM event_interested WHERE event_id IN (${idPlaceholders})`
     ).bind(...eventIds).all();
 
+    const reactionsRows = await env.DB.prepare(
+      `SELECT event_id, COUNT(*) AS c FROM event_reactions WHERE event_id IN (${idPlaceholders}) GROUP BY event_id`
+    ).bind(...eventIds).all().catch(() => ({ results: [] }));
+
+    const commentsRows = await env.DB.prepare(
+      `SELECT event_id, COUNT(*) AS c FROM event_comments WHERE event_id IN (${idPlaceholders}) AND COALESCE(is_deleted,0) = 0 GROUP BY event_id`
+    ).bind(...eventIds).all().catch(() => ({ results: [] }));
+
+    const sharesRows = await env.DB.prepare(
+      `SELECT event_id, COUNT(*) AS c FROM event_shares WHERE event_id IN (${idPlaceholders}) GROUP BY event_id`
+    ).bind(...eventIds).all().catch(() => ({ results: [] }));
+
     const attendeesMap = new Map<number, number[]>();
     for (const r of (attendeesRows.results || []) as any[]) {
       const eid = Number(r.event_id);
@@ -95,6 +107,21 @@ async function handleGetAllEvents(env: Env) {
       interestedMap.get(eid)!.push(uid);
     }
 
+    const reactionsMap = new Map<number, number>();
+    for (const r of (reactionsRows.results || []) as any[]) {
+      reactionsMap.set(Number(r.event_id), Number(r.c || 0));
+    }
+
+    const commentsMap = new Map<number, number>();
+    for (const r of (commentsRows.results || []) as any[]) {
+      commentsMap.set(Number(r.event_id), Number(r.c || 0));
+    }
+
+    const sharesMap = new Map<number, number>();
+    for (const r of (sharesRows.results || []) as any[]) {
+      sharesMap.set(Number(r.event_id), Number(r.c || 0));
+    }
+
     const hydrated = list.map((e) => ({
       ...e,
       attendees: attendeesMap.get(Number(e.id)) || [],
@@ -102,6 +129,10 @@ async function handleGetAllEvents(env: Env) {
       organizerId: e.creator_id,
       date: e.event_date,
       image: e.cover_url,
+      reactions_count: reactionsMap.get(Number(e.id)) || 0,
+      comments_count: commentsMap.get(Number(e.id)) || 0,
+      shares_count: sharesMap.get(Number(e.id)) || 0,
+      shares: sharesMap.get(Number(e.id)) || 0,
     }));
 
     return json({ success: true, events: hydrated });
@@ -136,6 +167,18 @@ async function handleGetGroupEvents(env: Env, groupId: number) {
       `SELECT event_id, user_id FROM event_interested WHERE event_id IN (${idPlaceholders})`
     ).bind(...eventIds).all();
 
+    const reactionsRows = await env.DB.prepare(
+      `SELECT event_id, COUNT(*) AS c FROM event_reactions WHERE event_id IN (${idPlaceholders}) GROUP BY event_id`
+    ).bind(...eventIds).all().catch(() => ({ results: [] }));
+
+    const commentsRows = await env.DB.prepare(
+      `SELECT event_id, COUNT(*) AS c FROM event_comments WHERE event_id IN (${idPlaceholders}) AND COALESCE(is_deleted,0) = 0 GROUP BY event_id`
+    ).bind(...eventIds).all().catch(() => ({ results: [] }));
+
+    const sharesRows = await env.DB.prepare(
+      `SELECT event_id, COUNT(*) AS c FROM event_shares WHERE event_id IN (${idPlaceholders}) GROUP BY event_id`
+    ).bind(...eventIds).all().catch(() => ({ results: [] }));
+
     const attendeesMap = new Map<number, number[]>();
     for (const r of (attendeesRows.results || []) as any[]) {
       const eid = Number(r.event_id);
@@ -152,6 +195,21 @@ async function handleGetGroupEvents(env: Env, groupId: number) {
       interestedMap.get(eid)!.push(uid);
     }
 
+    const reactionsMap = new Map<number, number>();
+    for (const r of (reactionsRows.results || []) as any[]) {
+      reactionsMap.set(Number(r.event_id), Number(r.c || 0));
+    }
+
+    const commentsMap = new Map<number, number>();
+    for (const r of (commentsRows.results || []) as any[]) {
+      commentsMap.set(Number(r.event_id), Number(r.c || 0));
+    }
+
+    const sharesMap = new Map<number, number>();
+    for (const r of (sharesRows.results || []) as any[]) {
+      sharesMap.set(Number(r.event_id), Number(r.c || 0));
+    }
+
     const hydrated = list.map((e) => ({
       ...e,
       attendees: attendeesMap.get(Number(e.id)) || [],
@@ -159,6 +217,10 @@ async function handleGetGroupEvents(env: Env, groupId: number) {
       organizerId: e.creator_id,
       date: e.event_date,
       image: e.cover_url,
+      reactions_count: reactionsMap.get(Number(e.id)) || 0,
+      comments_count: commentsMap.get(Number(e.id)) || 0,
+      shares_count: sharesMap.get(Number(e.id)) || 0,
+      shares: sharesMap.get(Number(e.id)) || 0,
     }));
 
     return json({ success: true, events: hydrated });

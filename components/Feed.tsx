@@ -3263,6 +3263,14 @@ const normalizeEventFromFeed = (item: any) => {
       ? item.reactions_preview
       : [],
 
+    reactor_name: String(item?.reactor_name ?? item?.reactorName ?? meta?.reactor_name ?? ''),
+    reactions_preview: Array.isArray(item?.reactions_preview)
+      ? item.reactions_preview
+      : Array.isArray(item?.reactions)
+      ? item.reactions
+      : [],
+    reactions_by_type: Array.isArray(item?.reactions_by_type) ? item.reactions_by_type : [],
+
     comments_count: Number(
       item?.comments_count ??
       item?.comment_count ??
@@ -4456,8 +4464,11 @@ export const EventPost = memo(
             if (data.my_reaction !== undefined) {
               setMyReaction(data.my_reaction || undefined);
             }
-            if (typeof data.comments_count === 'number' && data.comments_count > 0) {
+            if (typeof data.comments_count === 'number') {
               setCommentCount(data.comments_count);
+            }
+            if (typeof data.shares_count === 'number') {
+              setShareCount(data.shares_count);
             }
           }
         })
@@ -4703,25 +4714,25 @@ export const EventPost = memo(
 
       if (onReact) {
         onReact(eventAsPost as any, type);
-      }
-
-      try {
-        const res = await apiFetch(`/api/events/${eventId}/react`, {
-          method: 'POST',
-          body: JSON.stringify({
-            type,
-            user_id: safeUserId(currentUser),
-            event_id: eventId,
-          }),
-        });
-        if (res && typeof res.reactions_count === 'number') {
-          setReactionCount(Number(res.reactions_count));
+      } else {
+        try {
+          const res = await apiFetch(`/api/events/${eventId}/react`, {
+            method: 'POST',
+            body: JSON.stringify({
+              type,
+              user_id: safeUserId(currentUser),
+              event_id: eventId,
+            }),
+          });
+          if (res && typeof res.reactions_count === 'number') {
+            setReactionCount(Number(res.reactions_count));
+          }
+          if (res && res.my_reaction !== undefined) {
+            setMyReaction(res.my_reaction || undefined);
+          }
+        } catch (error) {
+          console.error('Failed to react to event:', error);
         }
-        if (res && res.my_reaction !== undefined) {
-          setMyReaction(res.my_reaction || undefined);
-        }
-      } catch (error) {
-        console.error('Failed to react to event:', error);
       }
     };
 
@@ -4961,64 +4972,60 @@ export const EventPost = memo(
               </div>
             </div>
 
-            {(finalReactionCount > 0 || commentCount > 0 || shareCount > 0) && (
-              <div className="px-3 md:px-4 py-2.5 flex items-center justify-between text-[#94A3B8] text-[16px] border-t border-[#1E293B]">
-                <div className="flex items-center gap-2">
-                  {finalReactionCount > 0 && (
-                    <div
-                      className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowReactionsSheet(true);
-                      }}
-                    >
-                      <div className="flex -space-x-2">
-                        {emojiList.slice(0, 2).map((e, i) => (
-                          <span
-                            key={i}
-                            className="w-[24px] h-[24px] rounded-full bg-[#1E293B] border border-[#0B1120] flex items-center justify-center text-[16px]"
-                            style={{ zIndex: 10 - i }}
-                          >
-                            {e}
-                          </span>
-                        ))}
-                      </div>
-
-                      {reactionText && (
-                        <span className="text-[17px] text-[#F8FAFC] font-bold">
-                          {reactionText}
+            <div className="px-3 md:px-4 py-2.5 flex items-center justify-between text-[#94A3B8] text-[16px] border-t border-[#1E293B]">
+              <div className="flex items-center gap-2">
+                {finalReactionCount > 0 && (
+                  <div
+                    className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowReactionsSheet(true);
+                    }}
+                  >
+                    <div className="flex -space-x-2">
+                      {emojiList.slice(0, 2).map((e, i) => (
+                        <span
+                          key={i}
+                          className="w-[24px] h-[24px] rounded-full bg-[#1E293B] border border-[#0B1120] flex items-center justify-center text-[16px]"
+                          style={{ zIndex: 10 - i }}
+                        >
+                          {e}
                         </span>
-                      )}
+                      ))}
                     </div>
-                  )}
-                </div>
 
-                <div className="flex gap-4">
-                  {commentCount > 0 && (
-                    <span
-                      className="hover:underline cursor-pointer text-[#CBD5E1] hover:text-[#F8FAFC] text-[20.5px] font-semibold transition-colors"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleOpenComments();
-                      }}
-                    >
-                      {fmtCount(commentCount)} Comments
-                    </span>
-                  )}
-                  {shareCount > 0 && (
-                    <span
-                      className="hover:underline cursor-pointer text-[#94A3B8] text-[16px] font-medium"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleShare();
-                      }}
-                    >
-                      {fmtCount(shareCount)} Shares
-                    </span>
-                  )}
-                </div>
+                    {reactionText && (
+                      <span className="text-[17px] text-[#F8FAFC] font-bold">
+                        {reactionText}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
-            )}
+
+              <div className="flex gap-4">
+                <span
+                  className="hover:underline cursor-pointer text-[#CBD5E1] hover:text-[#F8FAFC] text-[20.5px] font-semibold transition-colors"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleOpenComments();
+                  }}
+                >
+                  {fmtCount(commentCount)} Discussions
+                </span>
+                {shareCount > 0 && (
+                  <span
+                    className="hover:underline cursor-pointer text-[#94A3B8] text-[16px] font-medium"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleShare();
+                    }}
+                  >
+                    {fmtCount(shareCount)} Shares
+                  </span>
+                )}
+              </div>
+            </div>
 
             <div
               className="px-3.5 py-2.5 border-t border-[#1E293B] flex items-center justify-between"
