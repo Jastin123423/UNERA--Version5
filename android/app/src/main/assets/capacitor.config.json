@@ -1,6 +1,6 @@
 {
 	"appId": "com.unera.social",
-	"appName": "UNERA",
+	"appName": "Feathered",
 	"webDir": "dist",
 	"android": {
 		"allowMixedContent": true,
@@ -11,6 +11,9 @@
 		"androidScheme": "https",
 		"cleartext": true,
 		"allowNavigation": [
+			"feathered.social",
+			"*.feathered.social",
+			"media.feathered.social",
 			"unera.social",
 			"*.unera.social",
 			"media.unera.social",

@@ -10,7 +10,7 @@ export { getApiBaseUrl, resolveApiUrl, isNativeApp };
 
 /**
  * Intercepts browser network requests in native Android WebView
- * so relative '/api/...' calls reach the live backend (https://unera.social)
+ * so relative '/api/...' calls reach the live backend (https://feathered.social)
  * instead of failing against 'https://localhost'.
  */
 function setupNativeNetworkInterceptor(): void {
@@ -19,7 +19,7 @@ function setupNativeNetworkInterceptor(): void {
   const base = getApiBaseUrl();
   if (!base) return;
 
-  console.log('🌐 UNERA Native: API base configured to', base);
+  console.log('🌐 Feathered Native: API base configured to', base);
 
   // 1. Monkey-patch window.fetch
   if (typeof window.fetch === 'function' && !(window as any).__uneraFetchPatched) {
@@ -203,7 +203,12 @@ export function initAndroidBridge(): void {
       if (!target || !target.href) return;
 
       const href = target.href;
-      if (href.startsWith('http') && !href.includes(window.location.host) && !href.includes('unera.social')) {
+      if (
+        href.startsWith('http') &&
+        !href.includes(window.location.host) &&
+        !href.includes('feathered.social') &&
+        !href.includes('unera.social')
+      ) {
         e.preventDefault();
         Browser.open({ url: href }).catch(() => {
           window.open(href, '_system');

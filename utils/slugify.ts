@@ -18,37 +18,37 @@ export function slugify(text: string): string {
 }
 
 export function generatePostUrl(post: any): string {
-  const baseUrl = 'https://unera.social';
+  const baseUrl = 'https://feathered.social';
   const slug = slugify(post.title || post.content || 'post');
   return `${baseUrl}/post/${post.id}/${slug}`;
 }
 
 export function generateReelUrl(reel: any): string {
-  const baseUrl = 'https://unera.social';
+  const baseUrl = 'https://feathered.social';
   const slug = slugify(reel.caption || reel.song_name || 'reel');
   return `${baseUrl}/reel/${reel.id}/${slug}`;
 }
 
 export function generateGroupUrl(group: any): string {
-  const baseUrl = 'https://unera.social';
+  const baseUrl = 'https://feathered.social';
   const slug = slugify(group.name);
   return `${baseUrl}/group/${group.id}/${slug}`;
 }
 
 export function generateEventUrl(event: any): string {
-  const baseUrl = 'https://unera.social';
+  const baseUrl = 'https://feathered.social';
   const slug = slugify(event.title);
   return `${baseUrl}/event/${event.id}/${slug}`;
 }
 
 export function generateMusicUrl(song: any): string {
-  const baseUrl = 'https://unera.social';
+  const baseUrl = 'https://feathered.social';
   const slug = slugify(`${song.title} by ${song.artist}`);
   return `${baseUrl}/music/${song.id}/${slug}`;
 }
 
 export function generateProductUrl(product: any): string {
-  const baseUrl = 'https://unera.social';
+  const baseUrl = 'https://feathered.social';
   const slug = slugify(product.title);
   return `${baseUrl}/product/${product.id}/${slug}`;
 }

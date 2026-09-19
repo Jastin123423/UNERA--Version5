@@ -3263,6 +3263,32 @@ const normalizeEventFromFeed = (item: any) => {
       ? item.reactions_preview
       : [],
 
+    comments_count: Number(
+      item?.comments_count ??
+      item?.comment_count ??
+      (Array.isArray(item?.comments) ? item.comments.length : 0) ??
+      meta?.comments_count ??
+      0
+    ),
+
+    comments: Array.isArray(item?.comments) ? item.comments : [],
+
+    shares_count: Number(
+      item?.shares_count ??
+      item?.shares ??
+      item?.share_count ??
+      meta?.shares_count ??
+      0
+    ),
+
+    shares: Number(
+      item?.shares_count ??
+      item?.shares ??
+      item?.share_count ??
+      meta?.shares_count ??
+      0
+    ),
+
     creator_id: Number(
       item?.user_id ??
       meta?.creator_id ??
@@ -4378,6 +4404,59 @@ export const EventPost = memo(
     const [loading, setLoading] = useState(false);
     const [showShareSheet, setShowShareSheet] = useState(false);
     const [showEventPreviewModal, setShowEventPreviewModal] = useState(false);
+    const [showReactionsSheet, setShowReactionsSheet] = useState(false);
+
+    const [reactionCount, setReactionCount] = useState<number>(() =>
+      Number(
+        event.reactions_count ??
+        event.likes_count ??
+        (Array.isArray(event.reactions) ? event.reactions.length : 0)
+      )
+    );
+    const [myReaction, setMyReaction] = useState<ReactionType | undefined>(() =>
+      event.my_reaction || event.user_reaction || undefined
+    );
+    const [commentCount, setCommentCount] = useState<number>(() =>
+      Number(
+        event.comments_count ??
+        (Array.isArray(event.comments) ? event.comments.length : 0)
+      )
+    );
+    const [shareCount, setShareCount] = useState<number>(() =>
+      Number(event.shares_count ?? event.shares ?? 0)
+    );
+
+    useEffect(() => {
+      if (typeof event.reactions_count === 'number') {
+        setReactionCount(event.reactions_count);
+      } else if (typeof event.likes_count === 'number') {
+        setReactionCount(event.likes_count);
+      } else if (Array.isArray(event.reactions)) {
+        setReactionCount(event.reactions.length);
+      }
+      if (event.my_reaction !== undefined) {
+        setMyReaction(event.my_reaction || undefined);
+      }
+      if (typeof event.comments_count === 'number') {
+        setCommentCount(event.comments_count);
+      } else if (Array.isArray(event.comments)) {
+        setCommentCount(event.comments.length);
+      }
+      if (typeof event.shares_count === 'number') {
+        setShareCount(event.shares_count);
+      } else if (typeof event.shares === 'number') {
+        setShareCount(event.shares);
+      }
+    }, [
+      event.reactions_count,
+      event.likes_count,
+      event.reactions,
+      event.my_reaction,
+      event.comments_count,
+      event.comments,
+      event.shares_count,
+      event.shares,
+    ]);
 
     const creator =
       author ||
@@ -4497,24 +4576,62 @@ export const EventPost = memo(
       event.id ? `/api/events/${event.id}/react` : null;
 
     const handleReact = async (type: ReactionType) => {
-  if (!currentUser || !event.id || !onReact) return;
-      
+      if (!currentUser) {
+        alert('Please login to react');
+        return;
+      }
+      const eventId = Number(event.event_id || event.id || 0);
+      if (!eventId) return;
 
-  const eventAsPost = {
-  ...event,
-  id: event.id,
-  event_id: event.id,
-  source: "event",
-  item_type: "event",
-  type: "event",
-  post_type: "event",
-  kind: "event",
-};
-  
- onReact(eventAsPost as any, type);
-};
+      const prevReaction = myReaction;
+      const prevCount = reactionCount;
+      const isRemoving = prevReaction === type;
+      const nextReaction = isRemoving ? undefined : type;
+      const nextCount = isRemoving
+        ? Math.max(0, prevCount - 1)
+        : !prevReaction
+        ? prevCount + 1
+        : prevCount;
 
+      setMyReaction(nextReaction);
+      setReactionCount(nextCount);
 
+      const eventAsPost = {
+        ...event,
+        id: eventId,
+        event_id: eventId,
+        source: 'event',
+        item_type: 'event',
+        type: 'event',
+        post_type: 'event',
+        kind: 'event',
+        reactions_count: nextCount,
+        my_reaction: nextReaction,
+      };
+
+      if (onReact) {
+        onReact(eventAsPost as any, type);
+      }
+
+      try {
+        const res = await apiFetch(`/api/events/${eventId}/react`, {
+          method: 'POST',
+          body: JSON.stringify({
+            type,
+            user_id: safeUserId(currentUser),
+            event_id: eventId,
+          }),
+        });
+        if (res && typeof res.reactions_count === 'number') {
+          setReactionCount(Number(res.reactions_count));
+        }
+        if (res && res.my_reaction !== undefined) {
+          setMyReaction(res.my_reaction || undefined);
+        }
+      } catch (error) {
+        console.error('Failed to react to event:', error);
+      }
+    };
 
     const handleShare = () => {
       if (!currentUser) alert('Please login to share');
@@ -4522,8 +4639,10 @@ export const EventPost = memo(
     };
 
     const handleShareComplete = (destination: string, data?: any) => {
-      if (onShare && data?.success && event.id) {
-        const newShares = data?.shares || 0;
+      const newShares =
+        data && typeof data.shares === 'number' ? data.shares : shareCount + 1;
+      setShareCount(newShares);
+      if (onShare && event.id) {
         onShare(event.id, newShares);
       }
       setShowShareSheet(false);
@@ -4535,6 +4654,9 @@ export const EventPost = memo(
           id: event.id,
           type: 'event',
           ...event,
+          comments_count: commentCount,
+          reactions_count: reactionCount,
+          my_reaction: myReaction,
         };
         onOpenComments(eventAsPost as PostType);
       }
@@ -4747,17 +4869,67 @@ export const EventPost = memo(
               </div>
             </div>
 
+            {(reactionCount > 0 || commentCount > 0 || shareCount > 0) && (
+              <div className="px-3 md:px-4 py-2 flex items-center justify-between text-[#94A3B8] text-[15px] border-t border-white/10">
+                <div className="flex items-center gap-2">
+                  {reactionCount > 0 && (
+                    <div
+                      className="flex items-center gap-1.5 cursor-pointer hover:opacity-80 transition-opacity"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowReactionsSheet(true);
+                      }}
+                    >
+                      <span className="text-[14px] text-[#F8FAFC] font-bold">
+                        {fmtCount(reactionCount)} {reactionCount === 1 ? 'Reaction' : 'Reactions'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-4">
+                  {commentCount > 0 && (
+                    <span
+                      className="hover:underline cursor-pointer text-[#CBD5E1] hover:text-[#F8FAFC] text-[14px] font-semibold transition-colors"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenComments();
+                      }}
+                    >
+                      {fmtCount(commentCount)} Comments
+                    </span>
+                  )}
+                  {shareCount > 0 && (
+                    <span
+                      className="hover:underline cursor-pointer text-[#94A3B8] text-[14px] font-medium"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleShare();
+                      }}
+                    >
+                      {fmtCount(shareCount)} Shares
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div
               className="px-3.5 py-2.5 border-t border-white/10 flex items-center justify-between"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center gap-4">
-                <ReactionButton
-                  currentUserReactions={(event as any).my_reaction || undefined}
-                  reactionCount={Number((event as any).reactions_count || 0)}
-                  onReact={handleReact}
-                  isGuest={!currentUser}
-                />
+                <div
+                  className="flex items-center gap-1.5 cursor-pointer"
+                  onClick={() => setShowReactionsSheet(true)}
+                >
+                  <ReactionButton
+                    currentUserReactions={myReaction || undefined}
+                    reactionCount={reactionCount}
+                    onReact={handleReact}
+                    isGuest={!currentUser}
+                  />
+                </div>
                 <button
                   type="button"
                   className="flex items-center gap-1.5 text-[#F8FAFC] hover:text-[#38BDF8] transition-colors focus:outline-none p-1 rounded-lg hover:bg-[#1E293B]/60"
@@ -4766,6 +4938,11 @@ export const EventPost = memo(
                   title="Discuss"
                 >
                   <i className="far fa-comment text-[22px]"></i>
+                  {commentCount > 0 && (
+                    <span className="text-[14px] font-semibold text-[#F8FAFC]">
+                      {fmtCount(commentCount)}
+                    </span>
+                  )}
                 </button>
                 <button
                   type="button"
@@ -4775,6 +4952,11 @@ export const EventPost = memo(
                   title="Share"
                 >
                   <i className="far fa-paper-plane text-[21px]"></i>
+                  {shareCount > 0 && (
+                    <span className="text-[14px] font-semibold text-[#F8FAFC]">
+                      {fmtCount(shareCount)}
+                    </span>
+                  )}
                 </button>
               </div>
             </div>
@@ -4824,6 +5006,22 @@ export const EventPost = memo(
             onProfileClick={onProfileClick}
           />
         )}
+
+        <ReactionsSheet
+          isOpen={showReactionsSheet}
+          onClose={() => setShowReactionsSheet(false)}
+          post={{
+            ...event,
+            id: Number(event.event_id || event.id || 0),
+            event_id: Number(event.event_id || event.id || 0),
+            item_type: 'event',
+            type: 'event',
+            reactions_count: reactionCount,
+            my_reaction: myReaction,
+          }}
+          onProfileClick={onProfileClick}
+          onOpenComments={() => handleOpenComments()}
+        />
       </>
     );
   },

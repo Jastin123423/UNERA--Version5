@@ -677,18 +677,7 @@ export const Header: React.FC<HeaderProps> = ({
               aria-label="Marketplace"
               title="Marketplace"
             >
-              <svg
-                viewBox="0 0 24 24"
-                className="w-[26px] h-[26px] sm:w-[28px] sm:h-[28px] group-hover:scale-105 transition-transform"
-                fill="none"
-                stroke="#FFFFFF"
-                strokeWidth="2.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M3 9l2-5h14l2 5v2a3 3 0 0 1-6 0v-2H9v2a3 3 0 0 1-6 0V9z" />
-                <path d="M4 14v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6" />
-              </svg>
+              <i className="fas fa-store text-[20px] sm:text-[22px] text-white group-hover:scale-105 transition-transform" />
               {Number(badgeCounts?.marketplace || 0) > 0 && (
                 <span className="absolute -top-1 -right-1 min-w-[20px] h-[20px] px-1.5 bg-[#F97316] text-white text-[11px] font-black rounded-full flex items-center justify-center shadow-md ring-2 ring-[#0F172A] leading-none pointer-events-none select-none tracking-tight">
                   {Number(badgeCounts?.marketplace || 0) > 99 ? '99+' : badgeCounts?.marketplace}

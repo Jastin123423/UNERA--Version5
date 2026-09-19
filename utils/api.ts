@@ -19,25 +19,53 @@ export const isNativeApp = (): boolean => {
 };
 
 /**
- * Primary production backend for UNERA.
+ * Primary production backend for Feathered.
  */
-export const LIVE_BACKEND_URL = 'https://unera.social';
+export const LIVE_BACKEND_URL = 'https://feathered.social';
 
 /**
  * Resolves the active base URL for API requests.
- * In Android APK / Native runtime, automatically defaults to https://unera.social.
- * On web, falls back to empty string (same-origin relative requests) unless VITE_API_BASE_URL is set.
+ * In Android APK / Native runtime, automatically connects to the current production database at https://feathered.social.
+ * On web, defaults to same-origin relative requests so it always uses the current database.
  */
 export const getApiBaseUrl = (): string => {
+  // 1. Explicit build/env variable override
   const envUrl = (import.meta as any).env?.VITE_API_BASE_URL?.replace(/\/$/, '');
   if (envUrl) {
     return envUrl;
   }
 
+  // 2. Client-side stored backend preference if available
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      const saved =
+        localStorage.getItem('feathered_api_base') ||
+        localStorage.getItem('unera_api_base');
+      if (saved && saved.startsWith('http')) {
+        return saved.replace(/\/$/, '');
+      }
+    } catch {
+      // ignore localStorage errors
+    }
+  }
+
+  // 3. Android APK / Native runtime:
   if (isNativeApp()) {
+    // If the webview is pointing to a live remote origin, use that same origin so it matches web exactly
+    if (
+      typeof window !== 'undefined' &&
+      window.location &&
+      window.location.hostname &&
+      window.location.hostname !== 'localhost' &&
+      window.location.hostname !== '127.0.0.1' &&
+      !window.location.protocol.startsWith('capacitor')
+    ) {
+      return window.location.origin;
+    }
     return LIVE_BACKEND_URL;
   }
 
+  // 4. Default web runtime uses same-origin relative endpoints
   return '';
 };
 

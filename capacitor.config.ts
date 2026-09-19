@@ -15,6 +15,7 @@ const config: CapacitorConfig = {
     allowNavigation: [
       'feathered.social',
       '*.feathered.social',
+      'media.feathered.social',
       'unera.social',
       '*.unera.social',
       'media.unera.social',
