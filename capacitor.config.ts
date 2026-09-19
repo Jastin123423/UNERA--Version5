@@ -13,6 +13,8 @@ const config: CapacitorConfig = {
     androidScheme: 'https',
     cleartext: true,
     allowNavigation: [
+      'featheredsocial.site',
+      '*.featheredsocial.site',
       'feathered.social',
       '*.feathered.social',
       'media.feathered.social',

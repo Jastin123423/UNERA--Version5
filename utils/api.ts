@@ -20,13 +20,13 @@ export const isNativeApp = (): boolean => {
 
 /**
  * Primary production backend for the application.
- * Connects directly to the active live database on unera.social.
+ * Connects directly to the active live database on https://featheredsocial.site.
  */
-export const LIVE_BACKEND_URL = 'https://unera.social';
+export const LIVE_BACKEND_URL = 'https://featheredsocial.site';
 
 /**
  * Resolves the active base URL for API requests.
- * In Android APK / Native runtime, automatically connects to the current production database at https://unera.social.
+ * In Android APK / Native runtime, automatically connects to the current production database at https://featheredsocial.site.
  * On web, defaults to same-origin relative requests so it always uses the current database.
  */
 export const getApiBaseUrl = (): string => {
@@ -42,7 +42,12 @@ export const getApiBaseUrl = (): string => {
       const saved =
         localStorage.getItem('feathered_api_base') ||
         localStorage.getItem('unera_api_base');
-      if (saved && saved.startsWith('http')) {
+      if (
+        saved &&
+        saved.startsWith('http') &&
+        !saved.includes('unera.social') &&
+        !saved.includes('feathered.social')
+      ) {
         return saved.replace(/\/$/, '');
       }
     } catch {

@@ -206,6 +206,7 @@ export function initAndroidBridge(): void {
       if (
         href.startsWith('http') &&
         !href.includes(window.location.host) &&
+        !href.includes('featheredsocial.site') &&
         !href.includes('feathered.social') &&
         !href.includes('unera.social')
       ) {
