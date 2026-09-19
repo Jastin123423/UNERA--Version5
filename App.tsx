@@ -10995,10 +10995,20 @@ return (
     onProfileClick={(id) => openProfile(id)}
     onStoryClick={(id) => openProfile(id)}
     onReact={(postOrId, type) => {
-      const pid = typeof postOrId === 'object' ? (postOrId.reel_id || postOrId.id) : postOrId;
-      reactToReel(pid, type);
+      const pid = Number(typeof postOrId === 'object' ? (postOrId.post_id || postOrId.id || postOrId.reel_id) : postOrId);
+      const targetPost = typeof postOrId === 'object'
+        ? postOrId
+        : posts.find((p) => Number(p.id) === pid) || reels.find((r) => Number(r.id) === pid) || { id: pid };
+      reactToFeedItem(targetPost, type as ReactionType);
     }}
-    onShare={shareReel}
+    onShare={(postId, count) => {
+      const pid = Number(postId);
+      const targetPost = posts.find((p) => Number(p.id) === pid) || reels.find((r) => Number(r.id) === pid) || { id: pid, shares: count, shares_count: count };
+      handleOpenShareSheet(targetPost);
+    }}
+    onOpenComments={(post) => {
+      handleOpenComments(post);
+    }}
     onFollow={followUser}
     checkIsFollowing={checkIsFollowing}
     onBack={goBack}

@@ -1787,34 +1787,35 @@ export const ShareBottomSheet = memo(
 
     const getShareEndpoint = () => {
       const itemType = getFeedItemType(post);
+      const itemId = Number(post?.id ?? post?.post_id ?? getFeedItemId(post) ?? 0);
       switch (itemType) {
         case 'event':
-          return '/api/events/share';
+          return post?.event_id ? `/api/events/${post.event_id}/share` : `/api/events/${itemId}/share`;
         case 'group_post':
           return '/api/groups/posts/share';
         case 'product':
-          return '/api/products/share';
+          return post?.product_id ? `/api/products/${post.product_id}/share` : `/api/products/${itemId}/share`;
         case 'reel':
-          return '/api/reels/share';
+          return `/api/posts/${itemId}/share`;
         case 'music':
-          return '/api/songs/share';
+          return `/api/songs/${itemId}/share`;
         case 'podcast':
-          return '/api/podcasts/share';
+          return `/api/podcasts/${itemId}/share`;
         default:
-          return '/api/posts/share';
+          return `/api/posts/${itemId}/share`;
       }
     };
 
     const getSharePayload = (destination: string) => {
       const itemType = getFeedItemType(post);
+      const itemId = Number(post?.id ?? post?.post_id ?? getFeedItemId(post) ?? 0);
       const base = {
         user_id: currentUser?.id,
         destination: destination,
         shared_at: new Date().toISOString(),
         item_type: itemType,
+        post_id: itemId,
       };
-      
-      const itemId = getFeedItemId(post);
       
       switch (itemType) {
         case 'event':
@@ -1824,7 +1825,7 @@ export const ShareBottomSheet = memo(
         case 'product':
           return { ...base, product_id: itemId };
         case 'reel':
-          return { ...base, reel_id: itemId };
+          return { ...base, post_id: itemId, reel_id: itemId };
         case 'music':
           return { ...base, song_id: itemId };
         case 'podcast':
@@ -1879,8 +1880,8 @@ export const ShareBottomSheet = memo(
         });
         if (onShareComplete) {
           const nextShares = safeNumber(
-            response?.shares ?? response?.share_count,
-            safeNumber(post.shares || 0, 0) + 1
+            response?.shares ?? response?.shares_count ?? response?.share_count,
+            safeNumber(post.shares ?? post.shares_count ?? 0, 0) + 1
           );
           onShareComplete(destination, {
             success: true,
@@ -2208,7 +2209,7 @@ export const ShareBottomSheet = memo(
                 onClick={() => {
                   const text = `Check out this post on UNERA: ${window.location.origin}/post/${getFeedItemId(post)}`;
                   window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
-                  closeSheet();
+                  handleShareAction('whatsapp');
                 }}
                 className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-[#1E293B] active:bg-[#334155] transition-all duration-200 group"
               >
@@ -2229,8 +2230,7 @@ export const ShareBottomSheet = memo(
                 onClick={() => {
                   const url = `${window.location.origin}/post/${getFeedItemId(post)}`;
                   navigator.clipboard.writeText(url);
-                  alert('Link copied to clipboard!');
-                  closeSheet();
+                  handleShareAction('link');
                 }}
                 className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-[#1E293B] active:bg-[#334155] transition-all duration-200 group"
               >

@@ -15,6 +15,7 @@ interface VideosPageProps {
   onStoryClick?: (userId: number) => void;
   onReact?: (post: any, type: string) => void;
   onShare?: (postId: number, count: number) => void;
+  onOpenComments?: (post: any) => void;
   onFollow?: (userId: number) => void;
   checkIsFollowing?: (userId: number) => boolean;
   onBack?: () => void;
@@ -34,6 +35,7 @@ export const VideosPage: React.FC<VideosPageProps> = ({
   onStoryClick,
   onReact,
   onShare,
+  onOpenComments,
   onFollow,
   checkIsFollowing,
   onBack,
@@ -240,8 +242,9 @@ export const VideosPage: React.FC<VideosPageProps> = ({
                   autoplay={true}
                   onProfileClick={onProfileClick}
                   onStoryClick={onStoryClick}
-                  onReact={onReact ? (postId, type) => onReact(videoPost, type) : undefined}
+                  onReact={onReact ? (post, type) => onReact(videoPost, type) : undefined}
                   onShare={onShare}
+                  onOpenComments={onOpenComments}
                   isFollowing={isFollowing}
                   onFollow={onFollow}
                 />

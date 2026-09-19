@@ -155,6 +155,7 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
   // Reaction states - matching standard posts
   const initialReaction = (activePost?.my_reaction || activePost?.myReaction || activePost?.reaction || undefined) as ReactionType | undefined;
   const [myReaction, setMyReaction] = useState<ReactionType | undefined>(initialReaction);
+  const [serverReactions, setServerReactions] = useState<any[]>([]);
 
   const initialReactionCount = Number(
     activePost?.reactions_count ??
@@ -214,8 +215,46 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
     }
   }, [activePost?.shares, activePost?.shares_count, activePost?.comments_count, activePost?.comments]);
 
+  // Normal Post Reactions endpoint: GET /api/posts/:id/reactions
+  const fetchReactions = useCallback(async () => {
+    if (!activePostId) return;
+    try {
+      const viewerId = currentUser?.id || 0;
+      const res = await apiFetch(`/api/posts/${activePostId}/reactions?viewerId=${viewerId}&limit=100`);
+      if (res && (res.success || Array.isArray(res.reactions))) {
+        if (typeof res.reactions_count === 'number') {
+          setReactionCount(res.reactions_count);
+        }
+        if (Array.isArray(res.reactions)) {
+          setServerReactions(res.reactions);
+          if (viewerId) {
+            const found = res.reactions.find((r: any) => Number(r.user_id) === Number(viewerId));
+            if (found?.type) {
+              setMyReaction(found.type as ReactionType);
+            }
+          }
+        }
+        if (res.my_reaction !== undefined) {
+          setMyReaction((res.my_reaction || undefined) as ReactionType | undefined);
+        } else if (res.reaction !== undefined) {
+          setMyReaction((res.reaction || undefined) as ReactionType | undefined);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to load reactions:', err);
+    }
+  }, [activePostId, currentUser?.id]);
+
+  useEffect(() => {
+    fetchReactions();
+  }, [fetchReactions]);
+
   // Reaction emojis and summary text (identical to normal post)
-  const reactionsArr = Array.isArray(activePost?.reactions) ? activePost.reactions : [];
+  const reactionsArr = serverReactions.length > 0
+    ? serverReactions
+    : Array.isArray(activePost?.reactions)
+    ? activePost.reactions
+    : [];
   const reactionsPreview = Array.isArray(activePost?.reactions_preview) ? activePost.reactions_preview : [];
   const combinedReactions = reactionsArr.length > 0 ? reactionsArr : reactionsPreview;
 
@@ -405,17 +444,8 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
     setMyReaction(nextReaction);
     setReactionCount(nextCount);
 
-    if (onReact) {
-      try {
-        onReact(activePost, type);
-      } catch {
-        (onReact as any)(activePostId, type);
-      }
-      return;
-    }
-
     try {
-      // Standard post react endpoint: /api/posts/${postId}/react
+      // Standard post react endpoint: POST /api/posts/${postId}/react
       const res = await apiFetch(`/api/posts/${activePostId}/react`, {
         method: 'POST',
         body: JSON.stringify({
@@ -430,7 +460,20 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
           setReactionCount(res.reactions_count);
         }
         if (res.my_reaction !== undefined) {
-          setMyReaction(res.my_reaction || undefined);
+          setMyReaction((res.my_reaction || undefined) as ReactionType | undefined);
+        } else if (res.reaction !== undefined) {
+          setMyReaction((res.reaction || undefined) as ReactionType | undefined);
+        }
+      }
+
+      // Re-fetch reactions list: GET /api/posts/:id/reactions
+      await fetchReactions();
+
+      if (onReact) {
+        try {
+          onReact(activePost, type);
+        } catch {
+          (onReact as any)(activePostId, type);
         }
       }
     } catch (err) {
@@ -544,24 +587,30 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
     const nextCount = sharesCount + 1;
     setSharesCount(nextCount);
 
-    if (onShare) {
-      onShare(activePostId, nextCount);
-    }
-
-    // Call standard post share endpoint: /api/posts/${postId}/share
+    // Call standard post share endpoint: POST /api/posts/${postId}/share
     try {
-      if (currentUser?.id) {
-        await apiFetch(`/api/posts/${activePostId}/share`, {
-          method: 'POST',
-          body: JSON.stringify({
-            destination: 'feed',
-            user_id: currentUser.id,
-            post_id: activePostId,
-          }),
-        });
+      const res = await apiFetch(`/api/posts/${activePostId}/share`, {
+        method: 'POST',
+        body: JSON.stringify({
+          destination: 'feed',
+          user_id: currentUser?.id || 1,
+          post_id: activePostId,
+        }),
+      });
+
+      if (res && (typeof res.shares === 'number' || typeof res.shares_count === 'number')) {
+        setSharesCount(res.shares ?? res.shares_count);
       }
     } catch (err) {
       console.warn('Post share endpoint error:', err);
+    }
+
+    if (onShare) {
+      try {
+        onShare(activePostId, nextCount);
+      } catch (err) {
+        console.warn('onShare callback error:', err);
+      }
     }
 
     // Native Web Share if available
@@ -868,22 +917,34 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
 
             {/* 2. Discuss / Comment */}
             <button
+              type="button"
               onClick={handleOpenDiscuss}
               className="flex items-center gap-1.5 text-[#F8FAFC] hover:text-[#38BDF8] transition-colors focus:outline-none p-1.5 rounded-lg hover:bg-[#1E293B]/60"
               aria-label="Discuss & Comments"
+              title="Discuss"
             >
               <i className="far fa-comment text-[20px]"></i>
-              <span className="text-[13px] font-semibold text-[#F8FAFC]">Discuss</span>
+              {commentsCount > 0 && (
+                <span className="text-[14px] font-semibold text-[#F8FAFC]">
+                  {formatCount(commentsCount)}
+                </span>
+              )}
             </button>
 
             {/* 3. Share */}
             <button
+              type="button"
               onClick={handleShare}
               className="flex items-center gap-1.5 text-[#F8FAFC] hover:text-[#38BDF8] transition-transform active:scale-110 focus:outline-none p-1.5 rounded-lg hover:bg-[#1E293B]/60"
               aria-label="Share reel"
+              title="Share"
             >
               <i className="far fa-paper-plane text-[19px]"></i>
-              <span className="text-[13px] font-semibold text-[#F8FAFC]">Share</span>
+              {sharesCount > 0 && (
+                <span className="text-[14px] font-semibold text-[#F8FAFC]">
+                  {formatCount(sharesCount)}
+                </span>
+              )}
             </button>
           </div>
 
@@ -976,7 +1037,13 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
         <ReactionsSheet
           isOpen={showReactionsSheet}
           onClose={() => setShowReactionsSheet(false)}
-          post={activePost}
+          post={{
+            ...activePost,
+            id: activePostId,
+            post_id: activePostId,
+            reactions_count: reactionCount,
+            reactions: combinedReactions,
+          }}
           onProfileClick={onProfileClick}
           onOpenComments={handleOpenDiscuss}
         />

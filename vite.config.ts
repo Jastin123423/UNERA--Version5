@@ -338,6 +338,79 @@ function apiDevPlugin(): Plugin {
           return res.end(JSON.stringify({ success: true, shares: 1 }));
         }
 
+        // Standard Post Endpoints: React, Reactions, Share, Comments
+        if (pathname.startsWith('/api/posts/') && pathname.endsWith('/react')) {
+          res.statusCode = 200;
+          if (req.method === 'POST') {
+            let body = '';
+            req.on('data', (chunk) => { body += chunk; });
+            return req.on('end', () => {
+              try {
+                const parsed = JSON.parse(body || '{}');
+                const rType = parsed.type || parsed.reaction || 'like';
+                return res.end(JSON.stringify({
+                  success: true,
+                  reactions_count: 1,
+                  my_reaction: rType,
+                  reaction: rType,
+                }));
+              } catch {
+                return res.end(JSON.stringify({ success: true, reactions_count: 1, my_reaction: 'like' }));
+              }
+            });
+          }
+          return res.end(JSON.stringify({ success: true, reactions_count: 1, my_reaction: 'like' }));
+        }
+
+        if (pathname.startsWith('/api/posts/') && pathname.endsWith('/reactions')) {
+          const parts = pathname.split('/');
+          const postId = Number(parts[3] || 0);
+          res.statusCode = 200;
+          return res.end(JSON.stringify({
+            success: true,
+            post_id: postId,
+            reactions_count: 1,
+            reactions: [
+              {
+                user_id: 1,
+                type: 'like',
+                created_at: new Date().toISOString(),
+                user: { id: 1, name: 'Alex Rivera', username: 'alex', profile_image_url: null },
+              },
+            ],
+          }));
+        }
+
+        if ((pathname.startsWith('/api/posts/') && pathname.endsWith('/share')) || pathname === '/api/posts/share') {
+          res.statusCode = 200;
+          return res.end(JSON.stringify({ success: true, shares: 1, shares_count: 1 }));
+        }
+
+        if (pathname.startsWith('/api/posts/') && (pathname.endsWith('/comments') || pathname.endsWith('/comment'))) {
+          res.statusCode = 200;
+          if (req.method === 'POST') {
+            let body = '';
+            req.on('data', (chunk) => { body += chunk; });
+            return req.on('end', () => {
+              try {
+                const parsed = JSON.parse(body || '{}');
+                return res.end(JSON.stringify({
+                  success: true,
+                  comment: {
+                    id: Date.now(),
+                    text: parsed.text || 'Great post!',
+                    user_id: parsed.user_id || 1,
+                    created_at: new Date().toISOString(),
+                  },
+                }));
+              } catch {
+                return res.end(JSON.stringify({ success: true, comment: { id: Date.now(), text: 'Nice!' } }));
+              }
+            });
+          }
+          return res.end(JSON.stringify({ success: true, comments: [] }));
+        }
+
         if (pathname === '/api/reel-likes') {
           res.statusCode = 200;
           return res.end(JSON.stringify({ success: true, liked: true, count: 1 }));
