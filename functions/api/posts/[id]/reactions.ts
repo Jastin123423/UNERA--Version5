@@ -5,7 +5,7 @@ type Env = { DB: D1Database };
 const cors: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET,OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, x-user-id",
 };
 
 export const onRequestOptions: PagesFunction = async () =>
@@ -15,6 +15,7 @@ const json = (data: any, status = 200) =>
   Response.json(data, { status, headers: cors });
 
 const toInt = (v: any, fallback = 0) => {
+  if (v === null || v === undefined || v === "") return fallback;
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : fallback;
 };
@@ -27,26 +28,35 @@ export const onRequestGet: PagesFunction<Env> = async ({ env, params, request })
     if (!post_id) return json({ success: false, error: "Invalid post id" }, 400);
 
     const url = new URL(request.url);
-    const limit = Math.min(Math.max(toInt(url.searchParams.get("limit"), 100), 1), 500);
-    const offset = Math.max(toInt(url.searchParams.get("offset"), 0), 0);
 
-    // List reactions + user info (if your users table has these columns)
+    // ✅ Fixed limit/offset parsing
+    const limitParam = url.searchParams.get("limit");
+    const offsetParam = url.searchParams.get("offset");
+    const limit = limitParam
+      ? Math.min(Math.max(Number(limitParam), 1), 500)
+      : 100;
+    const offset = offsetParam ? Math.max(Number(offsetParam), 0) : 0;
+
+    const viewerId = toInt(
+      request.headers.get("x-user-id") || url.searchParams.get("viewerId"),
+      0
+    );
+
+    // Reactions with user info
     const list = await env.DB.prepare(
-      `
-      SELECT
-        pr.user_id,
-        pr.type,
-        pr.created_at,
-        u.id as id,
-        u.name as name,
-        u.username as username,
-        u.profile_image_url as profile_image_url
-      FROM post_reactions pr
-      LEFT JOIN users u ON u.id = pr.user_id
-      WHERE pr.post_id = ?
-      ORDER BY pr.created_at DESC
-      LIMIT ? OFFSET ?
-      `
+      `SELECT
+         pr.user_id,
+         pr.type,
+         pr.created_at,
+         u.id AS id,
+         u.name AS name,
+         u.username AS username,
+         u.profile_image_url AS profile_image_url
+       FROM post_reactions pr
+       LEFT JOIN users u ON u.id = pr.user_id
+       WHERE pr.post_id = ?
+       ORDER BY pr.created_at DESC
+       LIMIT ? OFFSET ?`
     )
       .bind(post_id, limit, offset)
       .all();
@@ -65,19 +75,46 @@ export const onRequestGet: PagesFunction<Env> = async ({ env, params, request })
         : null,
     }));
 
-    // Total count (for your UI count)
-    const countRow = await env.DB.prepare(
-      `SELECT COUNT(*) as c FROM post_reactions WHERE post_id = ?`
-    )
+    // Total count
+    const countRow = await env.DB
+      .prepare(`SELECT COUNT(*) AS c FROM post_reactions WHERE post_id = ?`)
       .bind(post_id)
-      .first();
+      .first<{ c: number }>();
 
-    const reactions_count = toInt((countRow as any)?.c);
+    const reactions_count = toInt(countRow?.c);
+
+    // ✅ Per-type counts
+    const { results: countRows } = await env.DB
+      .prepare(
+        `SELECT type, COUNT(*) AS c
+         FROM post_reactions
+         WHERE post_id = ?
+         GROUP BY type`
+      )
+      .bind(post_id)
+      .all();
+
+    const counts: Record<string, number> = {};
+    for (const r of (countRows ?? []) as any[]) {
+      counts[normType(r.type)] = toInt(r.c);
+    }
+
+    // ✅ Viewer's own reaction
+    let my_reaction: string | null = null;
+    if (viewerId > 0) {
+      const mine = await env.DB
+        .prepare(`SELECT type FROM post_reactions WHERE post_id = ? AND user_id = ? LIMIT 1`)
+        .bind(post_id, viewerId)
+        .first<any>();
+      if (mine) my_reaction = normType(mine.type);
+    }
 
     return json({
       success: true,
       post_id,
       reactions_count,
+      counts,
+      my_reaction,
       reactions,
       limit,
       offset,
