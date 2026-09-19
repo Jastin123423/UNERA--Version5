@@ -35,6 +35,7 @@ interface InstagramVideoCardProps {
   isFollowing?: boolean;
   onFollow?: (userId: number) => void;
   onHashtagClick?: (tag: string) => void;
+  onOpenComments?: (post: any) => void;
 }
 
 interface ReelComment {
@@ -71,6 +72,7 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
   isFollowing = false,
   onFollow,
   onHashtagClick,
+  onOpenComments,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -304,7 +306,7 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
   };
 
   // ==========================================
-  // REELS ENDPOINT: REACT / LIKE
+  // NORMAL POST ENDPOINT: REACT / LIKE
   // ==========================================
   const handleLike = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -317,64 +319,78 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
     setIsLiked(nextLiked);
     setLikesCount((prev) => (nextLiked ? prev + 1 : Math.max(0, prev - 1)));
 
+    const activePostId = Number(post?.id || reelId);
+
     // Optimistic trigger to timeline post reaction
     if (onReact) {
-      onReact(post.id, nextLiked ? 'love' : null);
+      onReact(activePostId, nextLiked ? 'love' : null);
     }
 
     try {
-      const activeReelId = reelId || post.id;
-      // 1. Call Reels reaction endpoint
-      await apiFetch(`/api/reels/${activeReelId}/react`, {
+      // Standard post react endpoint: /api/posts/${postId}/react
+      await apiFetch(`/api/posts/${activePostId}/react`, {
         method: 'POST',
         body: JSON.stringify({
           user_id: currentUser.id,
-          reaction: nextLiked ? 'love' : 'like',
+          type: nextLiked ? 'love' : 'like',
+          post_id: activePostId,
         }),
       }).catch(async () => {
-        // Fallback to reel-likes
-        await apiFetch('/api/reel-likes', {
+        // Fallback to reels reaction endpoint if needed
+        await apiFetch(`/api/reels/${activePostId}/react`, {
           method: 'POST',
           body: JSON.stringify({
-            reel_id: activeReelId,
             user_id: currentUser.id,
-            type: 'love',
+            reaction: nextLiked ? 'love' : 'like',
           }),
         }).catch(() => {});
       });
     } catch (err) {
-      console.warn('Reels react endpoint error:', err);
+      console.warn('Post react endpoint error:', err);
     }
   };
 
   // ==========================================
-  // REELS ENDPOINT: DISCUSS / COMMENTS
+  // NORMAL POST ENDPOINT: DISCUSS / COMMENTS
   // ==========================================
   const fetchReelComments = useCallback(async () => {
-    const activeReelId = reelId || post.id;
-    if (!activeReelId) return;
+    const activePostId = Number(post?.id || reelId);
+    if (!activePostId) return;
 
     setIsLoadingComments(true);
     try {
-      const data = await apiFetch(`/api/reel-comments?reel_id=${activeReelId}`);
+      // Standard post comments endpoint: /api/posts/${postId}/comments?viewerId=${viewerId}
+      const viewerId = currentUser?.id || 0;
+      const data = await apiFetch(`/api/posts/${activePostId}/comments?viewerId=${viewerId}`);
       if (Array.isArray(data)) {
         setComments(data);
         setCommentsCount(data.length);
       } else if (Array.isArray(data?.comments)) {
         setComments(data.comments);
         setCommentsCount(data.comments.length);
+      } else {
+        const fallback = await apiFetch(`/api/reel-comments?reel_id=${activePostId}`);
+        const arr = Array.isArray(fallback) ? fallback : Array.isArray(fallback?.comments) ? fallback.comments : [];
+        if (arr.length > 0) {
+          setComments(arr);
+          setCommentsCount(arr.length);
+        }
       }
     } catch (err) {
-      console.warn('Failed to load reel comments:', err);
+      console.warn('Failed to load post comments for video:', err);
     } finally {
       setIsLoadingComments(false);
     }
-  }, [reelId, post.id]);
+  }, [post?.id, reelId, currentUser?.id]);
 
   const handleOpenDiscuss = (e?: React.MouseEvent) => {
     e?.stopPropagation();
-    setShowDiscussModal(true);
-    fetchReelComments();
+    if (onOpenComments) {
+      onOpenComments(post);
+    } else {
+      setShowDiscussModal(true);
+      fetchReelComments();
+    }
   };
 
   const handlePostComment = async (e: React.FormEvent) => {
@@ -387,7 +403,7 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
     }
 
     setIsSubmittingComment(true);
-    const activeReelId = reelId || post.id;
+    const activePostId = Number(post?.id || reelId);
 
     // Optimistic comment
     const tempComment: ReelComment = {
@@ -405,33 +421,45 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
     setCommentText('');
 
     try {
-      const res = await apiFetch('/api/reel-comments', {
+      // Standard post comment endpoint: /api/posts/${postId}/comment
+      const res = await apiFetch(`/api/posts/${activePostId}/comment`, {
         method: 'POST',
         body: JSON.stringify({
-          reel_id: activeReelId,
+          post_id: activePostId,
           user_id: currentUser.id,
           text,
         }),
+      }).catch(async () => {
+        // Fallback to reel comments
+        return await apiFetch('/api/reel-comments', {
+          method: 'POST',
+          body: JSON.stringify({
+            reel_id: activePostId,
+            user_id: currentUser.id,
+            text,
+          }),
+        });
       });
 
-      if (res?.comment?.id) {
+      if (res?.comment?.id || res?.id) {
+        const serverComment = res?.comment || res;
         setComments((prev) =>
-          prev.map((c) => (c.id === tempComment.id ? { ...c, ...res.comment } : c))
+          prev.map((c) => (c.id === tempComment.id ? { ...c, ...serverComment } : c))
         );
       }
     } catch (err) {
-      console.warn('Failed to post reel comment:', err);
+      console.warn('Failed to post comment on video:', err);
     } finally {
       setIsSubmittingComment(false);
     }
   };
 
   // ==========================================
-  // REELS ENDPOINT: SHARE
+  // NORMAL POST ENDPOINT: SHARE
   // ==========================================
   const handleShare = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
-    const activeReelId = reelId || post.id;
+    const activePostId = Number(post?.id || reelId);
     const nextCount = sharesCount + 1;
     setSharesCount(nextCount);
 
@@ -439,20 +467,26 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
       onShare(post.id, nextCount);
     }
 
-    // Call Reels share endpoint
+    // Call standard post share endpoint: /api/posts/${postId}/share
     try {
       if (currentUser?.id) {
-        await apiFetch(`/api/reels/${activeReelId}/share`, {
+        await apiFetch(`/api/posts/${activePostId}/share`, {
           method: 'POST',
-          body: JSON.stringify({ user_id: currentUser.id }),
-        }).catch(() => {});
+          body: JSON.stringify({ destination: 'feed', user_id: currentUser.id, post_id: activePostId }),
+        }).catch(async () => {
+          // Fallback to reels share
+          await apiFetch(`/api/reels/${activePostId}/share`, {
+            method: 'POST',
+            body: JSON.stringify({ user_id: currentUser.id }),
+          }).catch(() => {});
+        });
       }
     } catch (err) {
-      console.warn('Reels share endpoint error:', err);
+      console.warn('Post share endpoint error:', err);
     }
 
     // Native Web Share if available
-    const shareUrl = `${window.location.origin}/?reel=${activeReelId}`;
+    const shareUrl = `${window.location.origin}/?post=${activePostId}`;
     if (navigator.share) {
       try {
         await navigator.share({
@@ -552,14 +586,14 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
           <div className="flex flex-col leading-tight">
             <div className="flex items-center gap-1.5">
               <span
-                className="font-bold text-[14.5px] hover:underline cursor-pointer text-[#F8FAFC]"
+                className="font-bold text-[21px] hover:underline cursor-pointer text-[#F8FAFC]"
                 onClick={() => onProfileClick(authorId)}
               >
                 {authorName}
               </span>
               {/* REAL verification tick only - NEVER faked */}
               {isVerified && (
-                <VerifiedBadge size={14} className="shrink-0" />
+                <VerifiedBadge size={16} className="shrink-0" />
               )}
               <span className="text-[#64748B] text-[13px]">•</span>
               <span className="text-[#94A3B8] text-[12.5px]">
@@ -768,9 +802,9 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
 
         {/* Caption & Hashtags */}
         {post.content && (
-          <div className="mt-1 text-[14px] leading-snug">
+          <div className="mt-1 text-[15px] leading-snug">
             <span
-              className="font-bold text-[#F8FAFC] mr-1.5 cursor-pointer hover:underline"
+              className="font-bold text-[21px] text-[#F8FAFC] mr-1.5 cursor-pointer hover:underline"
               onClick={() => onProfileClick(authorId)}
             >
               {authorName}
@@ -795,7 +829,7 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
         {commentsCount > 0 && (
           <button
             onClick={handleOpenDiscuss}
-            className="mt-1 text-[#94A3B8] hover:text-[#CBD5E1] text-[13px] block transition-colors"
+            className="mt-1 text-[#CBD5E1] hover:text-[#F8FAFC] text-[20.5px] font-semibold block transition-colors"
           >
             View all {commentsCount} comments
           </button>
@@ -806,20 +840,20 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
           <img
             src={avatarFrom(currentUser)}
             alt=""
-            className="w-6 h-6 rounded-full object-cover"
+            className="w-7 h-7 rounded-full object-cover"
           />
           <input
             type="text"
             placeholder="Add a comment…"
             value={commentText}
             onChange={(e) => setCommentText(e.target.value)}
-            className="bg-transparent flex-1 text-xs text-[#F8FAFC] placeholder-[#64748B] outline-none"
+            className="bg-transparent flex-1 text-[16px] text-[#F8FAFC] placeholder-[#64748B] outline-none"
           />
           {commentText.trim() && (
             <button
               type="submit"
               disabled={isSubmittingComment}
-              className="text-[#1877F2] hover:text-[#38BDF8] text-xs font-bold transition-colors disabled:opacity-50"
+              className="text-[#1877F2] hover:text-[#38BDF8] text-[16px] font-bold transition-colors disabled:opacity-50"
             >
               Post
             </button>
@@ -946,12 +980,12 @@ export const InstagramVideoCard: React.FC<InstagramVideoCardProps> = ({
                 placeholder="Share your thoughts on this video…"
                 value={commentText}
                 onChange={(e) => setCommentText(e.target.value)}
-                className="flex-1 bg-[#1E293B] border border-[#334155] rounded-full px-4 py-2 text-sm text-[#F8FAFC] placeholder-[#64748B] outline-none focus:border-[#1877F2]"
+                className="flex-1 bg-[#1E293B] border border-[#334155] rounded-full px-4 py-2.5 text-[16px] text-[#F8FAFC] placeholder-[#64748B] outline-none focus:border-[#1877F2]"
               />
               <button
                 type="submit"
                 disabled={!commentText.trim() || isSubmittingComment}
-                className="bg-[#1877F2] hover:bg-[#166FE5] disabled:opacity-40 text-white text-xs font-bold px-4 py-2 rounded-full transition-colors flex items-center gap-1.5"
+                className="bg-[#1877F2] hover:bg-[#166FE5] disabled:opacity-40 text-white text-sm font-bold px-4 py-2.5 rounded-full transition-colors flex items-center gap-1.5"
               >
                 {isSubmittingComment ? (
                   <i className="fas fa-spinner fa-spin"></i>

@@ -2725,7 +2725,7 @@ const FeedStoryCard: React.FC<FeedStoryCardProps> = ({ story, onOpen }) => {
         />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <p className="text-[#F8FAFC] font-bold text-[15px] truncate">{authorName}</p>
+            <p className="text-[#F8FAFC] font-bold text-[21px] truncate">{authorName}</p>
             <span className="text-[#1877F2] text-[12px] font-bold">Story</span>
           </div>
           <p className="text-[#94A3B8] text-[12px]">
@@ -4426,6 +4426,81 @@ export const EventPost = memo(
       Number(event.shares_count ?? event.shares ?? 0)
     );
 
+    const [reactionsArr, setReactionsArr] = useState<any[]>(() => {
+      if (Array.isArray(event.reactions)) return event.reactions;
+      if (Array.isArray(event.reactions_preview)) return event.reactions_preview;
+      return [];
+    });
+
+    const reactorNameFromApi = String(event.reactor_name ?? event.reactorName ?? '').trim();
+
+    useEffect(() => {
+      if (Array.isArray(event.reactions)) setReactionsArr(event.reactions);
+      else if (Array.isArray(event.reactions_preview)) setReactionsArr(event.reactions_preview);
+    }, [event.reactions, event.reactions_preview]);
+
+    useEffect(() => {
+      const eventId = Number(event.event_id || event.id || 0);
+      if (!eventId) return;
+      let isMounted = true;
+      apiFetch(`/api/events/${eventId}/reactions?viewerId=${safeUserId(currentUser)}`)
+        .then((data: any) => {
+          if (!isMounted) return;
+          if (data?.success) {
+            if (Array.isArray(data.reactions)) {
+              setReactionsArr(data.reactions);
+            }
+            if (typeof data.reactions_count === 'number') {
+              setReactionCount(data.reactions_count);
+            }
+            if (data.my_reaction !== undefined) {
+              setMyReaction(data.my_reaction || undefined);
+            }
+            if (typeof data.comments_count === 'number' && data.comments_count > 0) {
+              setCommentCount(data.comments_count);
+            }
+          }
+        })
+        .catch(() => {});
+      return () => {
+        isMounted = false;
+      };
+    }, [event.id, event.event_id, currentUser]);
+
+    const finalReactionCount = reactionCount > 0 ? reactionCount : reactionsArr.length;
+
+    const emojiList = useMemo(() => {
+      const types = Array.from(
+        new Set(
+          reactionsArr.map((r: any) =>
+            String(r.type || r.reaction || '').toLowerCase()
+          )
+        )
+      ).filter(Boolean);
+      if (types.length) {
+        return types.slice(0, 3).map((t) => reactionEmoji(String(t)));
+      }
+      return finalReactionCount > 0 ? ['👍'] : [];
+    }, [reactionsArr, finalReactionCount]);
+
+    const reactorName = useMemo(() => {
+      const eventId = Number(event.event_id || event.id || 0);
+      if (!finalReactionCount) return '';
+      if (reactionsArr.length) {
+        const name = pickStableReactorName(eventId, reactionsArr, users);
+        return String(name || '').trim();
+      }
+      return reactorNameFromApi;
+    }, [event.event_id, event.id, finalReactionCount, reactionsArr, users, reactorNameFromApi]);
+
+    const reactionText = useMemo(() => {
+      if (!finalReactionCount) return '';
+      if (reactorName) {
+        return formatReactionText(finalReactionCount, reactorName);
+      }
+      return `${fmtCount(finalReactionCount)} ${finalReactionCount === 1 ? 'Reaction' : 'Reactions'}`;
+    }, [finalReactionCount, reactorName]);
+
     useEffect(() => {
       if (typeof event.reactions_count === 'number') {
         setReactionCount(event.reactions_count);
@@ -4595,6 +4670,23 @@ export const EventPost = memo(
 
       setMyReaction(nextReaction);
       setReactionCount(nextCount);
+
+      setReactionsArr((prev) => {
+        const myUid = safeUserId(currentUser);
+        const filtered = prev.filter((r) => Number(r.user_id || r.userId || r.user?.id) !== myUid);
+        if (!isRemoving && nextReaction) {
+          return [
+            {
+              user_id: myUid,
+              type: nextReaction,
+              user: currentUser,
+              name: currentUser.name || currentUser.username || 'You',
+            },
+            ...filtered,
+          ];
+        }
+        return filtered;
+      });
 
       const eventAsPost = {
         ...event,
@@ -4869,28 +4961,42 @@ export const EventPost = memo(
               </div>
             </div>
 
-            {(reactionCount > 0 || commentCount > 0 || shareCount > 0) && (
-              <div className="px-3 md:px-4 py-2 flex items-center justify-between text-[#94A3B8] text-[15px] border-t border-white/10">
+            {(finalReactionCount > 0 || commentCount > 0 || shareCount > 0) && (
+              <div className="px-3 md:px-4 py-2.5 flex items-center justify-between text-[#94A3B8] text-[16px] border-t border-[#1E293B]">
                 <div className="flex items-center gap-2">
-                  {reactionCount > 0 && (
+                  {finalReactionCount > 0 && (
                     <div
-                      className="flex items-center gap-1.5 cursor-pointer hover:opacity-80 transition-opacity"
+                      className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
                       onClick={(e) => {
                         e.stopPropagation();
                         setShowReactionsSheet(true);
                       }}
                     >
-                      <span className="text-[14px] text-[#F8FAFC] font-bold">
-                        {fmtCount(reactionCount)} {reactionCount === 1 ? 'Reaction' : 'Reactions'}
-                      </span>
+                      <div className="flex -space-x-2">
+                        {emojiList.slice(0, 2).map((e, i) => (
+                          <span
+                            key={i}
+                            className="w-[24px] h-[24px] rounded-full bg-[#1E293B] border border-[#0B1120] flex items-center justify-center text-[16px]"
+                            style={{ zIndex: 10 - i }}
+                          >
+                            {e}
+                          </span>
+                        ))}
+                      </div>
+
+                      {reactionText && (
+                        <span className="text-[17px] text-[#F8FAFC] font-bold">
+                          {reactionText}
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
 
-                <div className="flex items-center gap-4">
+                <div className="flex gap-4">
                   {commentCount > 0 && (
                     <span
-                      className="hover:underline cursor-pointer text-[#CBD5E1] hover:text-[#F8FAFC] text-[14px] font-semibold transition-colors"
+                      className="hover:underline cursor-pointer text-[#CBD5E1] hover:text-[#F8FAFC] text-[20.5px] font-semibold transition-colors"
                       onClick={(e) => {
                         e.stopPropagation();
                         handleOpenComments();
@@ -4901,7 +5007,7 @@ export const EventPost = memo(
                   )}
                   {shareCount > 0 && (
                     <span
-                      className="hover:underline cursor-pointer text-[#94A3B8] text-[14px] font-medium"
+                      className="hover:underline cursor-pointer text-[#94A3B8] text-[16px] font-medium"
                       onClick={(e) => {
                         e.stopPropagation();
                         handleShare();
@@ -4915,21 +5021,17 @@ export const EventPost = memo(
             )}
 
             <div
-              className="px-3.5 py-2.5 border-t border-white/10 flex items-center justify-between"
+              className="px-3.5 py-2.5 border-t border-[#1E293B] flex items-center justify-between"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center gap-4">
-                <div
-                  className="flex items-center gap-1.5 cursor-pointer"
-                  onClick={() => setShowReactionsSheet(true)}
-                >
-                  <ReactionButton
-                    currentUserReactions={myReaction || undefined}
-                    reactionCount={reactionCount}
-                    onReact={handleReact}
-                    isGuest={!currentUser}
-                  />
-                </div>
+                <ReactionButton
+                  currentUserReactions={myReaction || undefined}
+                  reactionCount={finalReactionCount}
+                  onReact={handleReact}
+                  isGuest={!currentUser}
+                  postId={Number(event.event_id || event.id || 0)}
+                />
                 <button
                   type="button"
                   className="flex items-center gap-1.5 text-[#F8FAFC] hover:text-[#38BDF8] transition-colors focus:outline-none p-1 rounded-lg hover:bg-[#1E293B]/60"

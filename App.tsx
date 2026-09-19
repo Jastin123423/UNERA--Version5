@@ -9569,7 +9569,7 @@ const reactToFeedItem = useCallback(async (item: any, type: ReactionType) => {
         endpoint = `/api/products/${itemId}/react`;
         break;
       case 'reel':
-        endpoint = `/api/reels/${itemId}/react`;
+        endpoint = `/api/posts/${itemId}/react`;
         break;
       case 'music':
         endpoint = `/api/songs/${itemId}/react`;
@@ -9662,7 +9662,7 @@ const fetchComments = useCallback(async (item: any) => {
         endpoint = `/api/products/${id}/reviews?viewerId=${currentUser?.id || 0}`;
         break;
       case 'reel':
-        endpoint = `/api/reels/${id}/comments?viewerId=${currentUser?.id || 0}`;
+        endpoint = `/api/posts/${id}/comments?viewerId=${currentUser?.id || 0}`;
         break;
       case 'music':
         endpoint = `/api/songs/${id}/comments?viewerId=${currentUser?.id || 0}`;
@@ -9782,7 +9782,7 @@ const createComment = useCallback(async (
         };
         break;
       case 'reel':
-        endpoint = `/api/reels/${id}/comment`;
+        endpoint = `/api/posts/${id}/comment`;
         payload = {
           user_id: currentUser.id,
           text: text || '',
