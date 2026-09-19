@@ -239,3 +239,17 @@ export function updateCachedComment(
   const list = existing.data.map((c: any) => (Number(c.id) === Number(commentId) ? updater(c) : c));
   setLocalCache(key, list);
 }
+
+export function removeCachedComment(
+  targetType: string,
+  targetId: string | number,
+  commentId: number | string
+): void {
+  const key = getCommentCacheKey(targetType, targetId);
+  const existing = getCachedComments(targetType, targetId);
+  if (!existing) return;
+  const list = existing.data.filter(
+    (c: any) => String(c.id) !== String(commentId) && String(c.parent_comment_id || c.parent_id) !== String(commentId)
+  );
+  setLocalCache(key, list);
+}

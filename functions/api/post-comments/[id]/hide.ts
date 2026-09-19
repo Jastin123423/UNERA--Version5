@@ -4,7 +4,7 @@ type Env = { DB: D1Database };
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST,OPTIONS",
+  "Access-Control-Allow-Methods": "POST,PATCH,OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, x-user-id",
 };
 
@@ -122,3 +122,5 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, params }
     return json({ success: false, error: err?.message || "Failed to hide comment" }, 500);
   }
 };
+
+export const onRequestPatch: PagesFunction<Env> = onRequestPost;

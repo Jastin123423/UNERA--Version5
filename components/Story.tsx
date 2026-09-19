@@ -14,7 +14,10 @@ import Filters, {
 import {
   getCachedComments,
   setCachedComments,
+  updateCachedComment,
+  removeCachedComment,
 } from '../utils/dataCache';
+import { CommentActionModal, useCommentLongPress } from './CommentActionModal';
 
 // -------------------- NATIVE APP HELPERS --------------------
 const isUneraNativeApp = (): boolean => {
@@ -811,26 +814,104 @@ export const StoryCommentsSheet: React.FC<StoryCommentsSheetProps> = ({
     }
   };
 
-  const handleDeleteComment = async (commentId: number) => {
-    if (!currentUser) return;
+  // Story Comment Hold / Actions Handlers
+  const [actionModalComment, setActionModalComment] = useState<any | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-    setComments(prev => {
-      const next = prev.filter(c => c.id !== commentId && c.parent_id !== commentId);
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage((curr) => (curr === msg ? null : curr));
+    }, 2500);
+  };
+
+  const { getHandlers: getCommentPressHandlers } = useCommentLongPress((comment: any) => {
+    setActionModalComment(comment);
+  });
+
+  const isCommentHidden = (comment: any): boolean => {
+    return Boolean(
+      comment?.is_hidden ||
+      comment?.hidden ||
+      comment?.hidden_scope ||
+      comment?.hidden_by
+    );
+  };
+
+  const isCommentAuthor = (comment: any): boolean => {
+    if (!currentUser) return false;
+    const authorId = Number(comment?.user_id ?? comment?.userId ?? 0);
+    return authorId > 0 && authorId === Number(currentUser.id);
+  };
+
+  const isPlatformAdmin = (): boolean => {
+    const role = String((currentUser as any)?.role || '').toLowerCase();
+    return ['admin', 'superadmin', 'moderator', 'owner'].includes(role);
+  };
+
+  const canHideComment = (comment: any): boolean => {
+    return isCommentAuthor(comment) || isPlatformAdmin();
+  };
+
+  const canDeleteComment = (comment: any): boolean => {
+    return isCommentAuthor(comment) || isPlatformAdmin();
+  };
+
+  const handleToggleHide = async (comment: any) => {
+    if (!currentUser || !comment || !storyId) return;
+    const commentId = comment.id;
+    const currentlyHidden = isCommentHidden(comment);
+    const nextAction: 'hide' | 'unhide' = currentlyHidden ? 'unhide' : 'hide';
+
+    // Optimistic UI update
+    setComments((prev) => {
+      const next = prev.map((c) =>
+        c.id === commentId
+          ? { ...c, is_hidden: !currentlyHidden, hidden_by: !currentlyHidden ? currentUser.id : null }
+          : c
+      );
+      setStoryCommentsCache(storyId, next);
+      return next;
+    });
+
+    showToast(nextAction === 'hide' ? 'Discussion hidden' : 'Discussion unhidden');
+
+    try {
+      await apiFetch(`/api/stories/${storyId}/comments`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          user_id: currentUser.id,
+          comment_id: commentId,
+          action: nextAction,
+        }),
+      });
+    } catch (error) {
+      console.error(`Failed to ${nextAction} story comment:`, error);
+      showToast(`Failed to ${nextAction} discussion`);
+      fetchComments(true);
+    }
+  };
+
+  const handleDeleteComment = async (commentId: any) => {
+    if (!currentUser || !storyId) return;
+    const cid = typeof commentId === 'object' ? commentId?.id : commentId;
+
+    setComments((prev) => {
+      const next = prev.filter((c) => c.id !== cid && c.parent_id !== cid);
       setStoryCommentsCache(storyId, next);
       onCountChange?.(next.length);
       return next;
     });
 
+    showToast('Discussion deleted');
+
     try {
-      await apiFetch(`/api/stories/${storyId}/comments`, {
+      await apiFetch(`/api/stories/${storyId}/comments?comment_id=${cid}&user_id=${currentUser.id}`, {
         method: 'DELETE',
-        body: JSON.stringify({
-          user_id: currentUser.id,
-          comment_id: commentId,
-        }),
       });
     } catch (error) {
       console.error('Failed to delete comment:', error);
+      showToast('Failed to delete discussion');
       fetchComments(true);
     }
   };
@@ -873,11 +954,13 @@ export const StoryCommentsSheet: React.FC<StoryCommentsSheetProps> = ({
   const renderComment = (comment: any, isReply: boolean = false, depth: number = 0) => {
     const author = resolveAuthor(comment);
     const isAuthor = currentUser && Number(author.uid) === Number(currentUser.id);
+    const isHidden = isCommentHidden(comment);
+    const pressHandlers = getCommentPressHandlers(comment);
     const MAX_DEPTH = 3;
     const actualDepth = Math.min(depth, MAX_DEPTH);
     
     return (
-      <div key={comment.id} className={`flex gap-3 ${isReply ? 'mt-3' : ''}`} style={{ marginLeft: isReply ? `${actualDepth * 24}px` : 0 }}>
+      <div key={comment.id} className={`flex gap-3 group/storycomment ${isReply ? 'mt-3' : ''}`} style={{ marginLeft: isReply ? `${actualDepth * 24}px` : 0 }}>
         <img
           src={author.image}
           className="w-9 h-9 rounded-full object-cover cursor-pointer flex-shrink-0"
@@ -885,19 +968,50 @@ export const StoryCommentsSheet: React.FC<StoryCommentsSheetProps> = ({
           onClick={() => author.uid && onProfileClick(author.uid)}
         />
         <div className="flex-1 min-w-0">
-          <div className="bg-[#162137]/65 hover:bg-[#1E293B]/70 border border-[#1E293B]/60 rounded-2xl px-3.5 py-2.5 transition-colors">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span
-                className="text-[#F8FAFC] font-bold text-[21px] cursor-pointer hover:underline"
-                onClick={() => author.uid && onProfileClick(author.uid)}
-              >
-                {author.name}
-              </span>
-              <span className="text-[#B0B3B8] text-[12px]">
-                {formatRelativeTime(comment.created_at)}
-              </span>
+          <div
+            {...pressHandlers}
+            className={`border rounded-2xl px-3.5 py-2.5 transition-all cursor-pointer select-none ${
+              isHidden
+                ? 'bg-[#162137]/35 hover:bg-[#1E293B]/45 border-amber-500/30 opacity-75'
+                : 'bg-[#162137]/65 hover:bg-[#1E293B]/70 border-[#1E293B]/60'
+            }`}
+            title="Hold for discussion options"
+          >
+            <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+              <div className="flex items-center gap-2">
+                <span
+                  className="text-[#F8FAFC] font-bold text-[21px] cursor-pointer hover:underline"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (author.uid) onProfileClick(author.uid);
+                  }}
+                >
+                  {author.name}
+                </span>
+                <span className="text-[#B0B3B8] text-[12px]">
+                  {formatRelativeTime(comment.created_at)}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {isHidden && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/30">
+                    Hidden
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActionModalComment(comment);
+                  }}
+                  className="opacity-0 group-hover/storycomment:opacity-100 p-1 text-[#94A3B8] hover:text-[#F8FAFC] rounded-full hover:bg-[#1E293B] transition-opacity"
+                  title="Discussion options"
+                >
+                  <i className="fas fa-ellipsis-h text-xs" />
+                </button>
+              </div>
             </div>
-            <div className={`text-[#CBD5E1] ${isReply ? 'text-[19.5px]' : 'text-[20.5px]'} leading-[1.38] mt-1 break-words`}>
+            <div className={`text-[#CBD5E1] ${isReply ? 'text-[19.5px]' : 'text-[20.5px]'} leading-[1.38] break-words`}>
               <RichText
                 text={String(comment.content || comment.text || '')}
                 users={users}
@@ -922,13 +1036,11 @@ export const StoryCommentsSheet: React.FC<StoryCommentsSheetProps> = ({
             >
               Reply
             </button>
-            {isAuthor && (
-              <button
-                onClick={() => handleDeleteComment(comment.id)}
-                className="text-[12px] text-[#B0B3B8] hover:text-[#F3425F]"
-              >
-                Delete
-              </button>
+            {isHidden && (
+              <span className="text-amber-400/90 font-medium text-[11px] inline-flex items-center gap-1">
+                <i className="far fa-eye-slash text-[10px]" />
+                <span>Hidden</span>
+              </span>
             )}
             {comment.likes_count > 0 && (
               <span className="text-[12px] text-[#B0B3B8]">
@@ -1082,6 +1194,34 @@ export const StoryCommentsSheet: React.FC<StoryCommentsSheetProps> = ({
           </form>
         </div>
       </div>
+
+      {/* Discussion Hold Action Modal */}
+      {actionModalComment && (
+        <CommentActionModal
+          isOpen={Boolean(actionModalComment)}
+          onClose={() => setActionModalComment(null)}
+          comment={actionModalComment}
+          authorName={resolveAuthor(actionModalComment).name}
+          authorAvatar={resolveAuthor(actionModalComment).image}
+          commentText={String(actionModalComment.content || actionModalComment.text || '')}
+          isHidden={isCommentHidden(actionModalComment)}
+          canHide={canHideComment(actionModalComment)}
+          canDelete={canDeleteComment(actionModalComment)}
+          onToggleHide={handleToggleHide}
+          onDelete={handleDeleteComment}
+          onReply={(c) => {
+            setReplyTo(c);
+            inputRef.current?.focus();
+          }}
+        />
+      )}
+
+      {/* Floating Action Feedback Toast */}
+      {toastMessage && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[100000] px-4 py-2 rounded-full bg-[#1E293B] border border-[#334155] text-white text-xs font-semibold shadow-2xl flex items-center gap-2 animate-in fade-in zoom-in-95 duration-150">
+          <span>{toastMessage}</span>
+        </div>
+      )}
     </div>
   );
 };

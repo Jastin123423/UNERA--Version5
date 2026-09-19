@@ -35,7 +35,9 @@ import {
   setCachedComments,
   addCachedComment,
   updateCachedComment,
+  removeCachedComment,
 } from '../utils/dataCache';
+import { CommentActionModal, useCommentLongPress } from './CommentActionModal';
 import { InstagramVideoCard } from './InstagramVideoCard';
 import { SavePostButton } from './SavePostButton';
 import { imageCache, observeForThumbnail, observeForFeed } from '../utils/imageCache';
@@ -8484,6 +8486,239 @@ export const CommentsSheet = memo(
     }
   };
 
+  // Discussion Hold / Actions State & Handlers
+  const [actionModalComment, setActionModalComment] = useState<any | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage((curr) => (curr === msg ? null : curr));
+    }, 2500);
+  };
+
+  const { getHandlers: getCommentPressHandlers } = useCommentLongPress((comment: any) => {
+    setActionModalComment(comment);
+  });
+
+  const isCommentHidden = (comment: any): boolean => {
+    return Boolean(
+      comment?.is_hidden ||
+      comment?.hidden ||
+      comment?.hidden_scope ||
+      comment?.hidden_by ||
+      comment?.hidden_label
+    );
+  };
+
+  const isCommentAuthor = (comment: any): boolean => {
+    const cUid = safeUserId(currentUser);
+    const aUid = Number(comment?.user_id ?? comment?.userId ?? comment?.author_id ?? 0);
+    return Boolean(cUid && aUid && cUid === aUid);
+  };
+
+  const isEntityOwner = (): boolean => {
+    const cUid = safeUserId(currentUser);
+    if (!cUid) return false;
+    const ownerId = Number(
+      p?.user_id ??
+      p?.userId ??
+      p?.author_id ??
+      p?.authorId ??
+      p?.seller_id ??
+      p?.artist_id ??
+      p?.song_owner_id ??
+      0
+    );
+    return Boolean(ownerId && ownerId === cUid);
+  };
+
+  const isPlatformAdmin = (): boolean => {
+    const role = String((currentUser as any)?.role || '').toLowerCase();
+    return ['admin', 'superadmin', 'moderator', 'owner'].includes(role);
+  };
+
+  const canHideComment = (comment: any): boolean => {
+    return isCommentAuthor(comment) || isEntityOwner() || isPlatformAdmin();
+  };
+
+  const canDeleteComment = (comment: any): boolean => {
+    return isCommentAuthor(comment) || isEntityOwner() || isPlatformAdmin();
+  };
+
+  const handleToggleHide = async (comment: any) => {
+    if (!currentUser || !comment) return;
+    const userId = safeUserId(currentUser);
+    const commentId = comment.id;
+    const currentlyHidden = isCommentHidden(comment);
+    const nextAction: 'hide' | 'unhide' = currentlyHidden ? 'unhide' : 'hide';
+
+    // Optimistic UI state & cache
+    setComments((prev) =>
+      prev.map((c) =>
+        c.id === commentId
+          ? {
+              ...c,
+              is_hidden: !currentlyHidden,
+              hidden_by: !currentlyHidden ? userId : null,
+              hidden_scope: !currentlyHidden ? 'user' : null,
+            }
+          : c
+      )
+    );
+
+    updateCachedComment(itemType, postId, commentId, (c: any) => ({
+      ...c,
+      is_hidden: !currentlyHidden,
+      hidden_by: !currentlyHidden ? userId : null,
+      hidden_scope: !currentlyHidden ? 'user' : null,
+    }));
+
+    showToast(nextAction === 'hide' ? 'Discussion hidden' : 'Discussion unhidden');
+
+    try {
+      switch (itemType) {
+        case 'song':
+        case 'music': {
+          const songId = p.song_id2 || p.song_id || p.id;
+          await apiFetch(`/api/songs/${songId}/comments`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+              action: nextAction,
+              user_id: userId,
+              comment_id: commentId,
+            }),
+          });
+          break;
+        }
+        case 'product': {
+          const productId = p.product_id || p.id;
+          await apiFetch(`/api/products/${productId}/reviews`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+              user_id: userId,
+              comment_id: commentId,
+              action: nextAction,
+            }),
+          });
+          break;
+        }
+        case 'group_post': {
+          await apiFetch(`/api/post-comments/${commentId}/hide`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+              user_id: userId,
+              action: nextAction,
+            }),
+          });
+          break;
+        }
+        case 'story': {
+          const storyId = p.story_id || p.id;
+          await apiFetch(`/api/stories/${storyId}/comments`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+              user_id: userId,
+              comment_id: commentId,
+              action: nextAction,
+            }),
+          });
+          break;
+        }
+        default: {
+          // Normal posts & others
+          await apiFetch(`/api/post-comments/${commentId}/hide`, {
+            method: 'POST',
+            body: JSON.stringify({
+              user_id: userId,
+              action: nextAction,
+            }),
+          });
+          break;
+        }
+      }
+    } catch (error) {
+      console.error(`Failed to ${nextAction} discussion:`, error);
+      showToast(`Failed to ${nextAction} discussion`);
+      // Revert optimistic update
+      setComments((prev) =>
+        prev.map((c) =>
+          c.id === commentId
+            ? {
+                ...c,
+                is_hidden: currentlyHidden,
+                hidden_by: currentlyHidden ? userId : null,
+                hidden_scope: currentlyHidden ? 'user' : null,
+              }
+            : c
+        )
+      );
+    }
+  };
+
+  const handleDelete = async (comment: any) => {
+    if (!currentUser || !comment) return;
+    const userId = safeUserId(currentUser);
+    const commentId = comment.id;
+
+    // Optimistic removal from state and cache
+    setComments((prev) =>
+      prev.filter((c) => c.id !== commentId && c.parent_comment_id !== commentId)
+    );
+
+    removeCachedComment(itemType, postId, commentId);
+    showToast('Discussion deleted');
+
+    try {
+      switch (itemType) {
+        case 'song':
+        case 'music': {
+          const songId = p.song_id2 || p.song_id || p.id;
+          await apiFetch(`/api/songs/${songId}/comments?comment_id=${commentId}&user_id=${userId}`, {
+            method: 'DELETE',
+          });
+          break;
+        }
+        case 'product': {
+          const productId = p.product_id || p.id;
+          await apiFetch(`/api/products/${productId}/reviews?comment_id=${commentId}&user_id=${userId}`, {
+            method: 'DELETE',
+          });
+          break;
+        }
+        case 'group_post': {
+          await apiFetch(`/api/post-comments/${commentId}/delete?user_id=${userId}`, {
+            method: 'DELETE',
+          });
+          break;
+        }
+        case 'story': {
+          const storyId = p.story_id || p.id;
+          await apiFetch(`/api/stories/${storyId}/comments?comment_id=${commentId}&user_id=${userId}`, {
+            method: 'DELETE',
+          });
+          break;
+        }
+        default: {
+          // Normal posts
+          await apiFetch(`/api/post-comments/${commentId}/delete?user_id=${userId}`, {
+            method: 'DELETE',
+          });
+          break;
+        }
+      }
+
+      if (onCommentAdded) {
+        onCommentAdded();
+      }
+    } catch (error) {
+      console.error('Failed to delete discussion:', error);
+      showToast('Failed to delete discussion');
+      fetchCommentsSilently();
+    }
+  };
+
+
   // Fetch comments silently (background refresh)
   const fetchCommentsSilently = async () => {
     if (abortControllerRef.current) {
@@ -8761,6 +8996,8 @@ export const CommentsSheet = memo(
     const isCurrentUserComment = a.uid === safeUserId(currentUser);
     const isFollowing = checkIsFollowing ? checkIsFollowing(a.uid) : false;
     const authorUser = users.find((x: any) => Number(x?.id) === a.uid);
+    const isHidden = isCommentHidden(comment);
+    const pressHandlers = getCommentPressHandlers(comment);
 
     return (
       <div className={`flex gap-2.5 sm:gap-3 ${isReply ? 'mt-2.5' : ''}`}>
@@ -8773,15 +9010,46 @@ export const CommentsSheet = memo(
           onClick={() => a.uid && onProfileClick(a.uid)}
         />
         <div className="flex-1 min-w-0">
-          <div className="inline-block max-w-full sm:max-w-[92%] bg-[#162137]/65 hover:bg-[#1E293B]/70 rounded-[18px] px-3.5 py-2.5 sm:px-4 sm:py-3 border border-[#1E293B]/60 shadow-sm transition-colors">
-            <div
-              className="text-[#F8FAFC] font-bold text-[21px] leading-tight cursor-pointer hover:underline inline-flex items-center gap-1.5"
-              onClick={() => a.uid && onProfileClick(a.uid)}
-            >
-              <span className="truncate">{a.name}</span>
-              {(comment?.is_verified || authorUser?.is_verified) && (
-                <VerifiedBadge size={21} className="shrink-0" />
-              )}
+          <div
+            {...pressHandlers}
+            className={`group/comment relative inline-block max-w-full sm:max-w-[92%] rounded-[18px] px-3.5 py-2.5 sm:px-4 sm:py-3 border shadow-sm transition-all select-none cursor-pointer ${
+              isHidden
+                ? 'bg-[#162137]/35 hover:bg-[#1E293B]/45 border-amber-500/30 opacity-75'
+                : 'bg-[#162137]/65 hover:bg-[#1E293B]/70 border-[#1E293B]/60'
+            }`}
+            title="Hold for discussion options"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div
+                className="text-[#F8FAFC] font-bold text-[21px] leading-tight cursor-pointer hover:underline inline-flex items-center gap-1.5"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (a.uid) onProfileClick(a.uid);
+                }}
+              >
+                <span className="truncate">{a.name}</span>
+                {(comment?.is_verified || authorUser?.is_verified) && (
+                  <VerifiedBadge size={21} className="shrink-0" />
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {isHidden && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/30">
+                    Hidden
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActionModalComment(comment);
+                  }}
+                  className="opacity-0 group-hover/comment:opacity-100 p-1 text-[#94A3B8] hover:text-[#F8FAFC] rounded-full hover:bg-[#1E293B] transition-opacity"
+                  title="More options"
+                >
+                  <i className="fas fa-ellipsis-h text-xs" />
+                </button>
+              </div>
             </div>
             <div className={`text-[#CBD5E1] ${isReply ? 'text-[19.5px]' : 'text-[20.5px]'} leading-[1.38] font-normal whitespace-pre-wrap break-words mt-1`}>
               <RichText
@@ -8797,7 +9065,10 @@ export const CommentsSheet = memo(
                   src={comment.image_url}
                   alt="Comment attachment"
                   className="max-w-full max-h-[220px] object-cover rounded-xl cursor-pointer hover:opacity-95 transition-opacity"
-                  onClick={() => window.open(comment.image_url, '_blank')}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    window.open(comment.image_url, '_blank');
+                  }}
                 />
               </div>
             )}
@@ -8825,6 +9096,12 @@ export const CommentsSheet = memo(
             >
               Reply
             </button>
+            {isHidden && (
+              <span className="text-amber-400/90 font-medium text-[11px] inline-flex items-center gap-1">
+                <i className="far fa-eye-slash text-[10px]" />
+                <span>Hidden</span>
+              </span>
+            )}
             {comment.likes_count > 0 && (
               <span className="inline-flex items-center gap-1 bg-[#F43F5E]/15 text-[#F43F5E] px-1.5 py-0.5 rounded-full text-[11px] font-bold">
                 <span className="text-[10px]">❤️</span>
@@ -9153,6 +9430,31 @@ export const CommentsSheet = memo(
           </button>
         </form>
       </div>
+
+      {/* Discussion Long-Press / Hold Action Modal */}
+      {actionModalComment && (
+        <CommentActionModal
+          isOpen={Boolean(actionModalComment)}
+          onClose={() => setActionModalComment(null)}
+          comment={actionModalComment}
+          authorName={resolveAuthor(actionModalComment).name}
+          authorAvatar={resolveAuthor(actionModalComment).image}
+          commentText={String(actionModalComment.text || '')}
+          isHidden={isCommentHidden(actionModalComment)}
+          canHide={canHideComment(actionModalComment)}
+          canDelete={canDeleteComment(actionModalComment)}
+          onToggleHide={handleToggleHide}
+          onDelete={handleDelete}
+          onReply={(c) => handleInitiateReply(c)}
+        />
+      )}
+
+      {/* Floating Action Feedback Toast */}
+      {toastMessage && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[100000] px-4 py-2 rounded-full bg-[#1E293B] border border-[#334155] text-white text-xs font-semibold shadow-2xl flex items-center gap-2 animate-in fade-in zoom-in-95 duration-150">
+          <span>{toastMessage}</span>
+        </div>
+      )}
     </div>
   );
 },

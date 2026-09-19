@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { User, Reel, ReactionType } from '../types';
-import { ShareBottomSheet, topReactionEmojis, formatReactionText, reactionEmoji } from './Feed';
+import { ShareBottomSheet, topReactionEmojis, formatReactionText, reactionEmoji, apiFetch } from './Feed';
 import Filters, { UneraFilter, buildUneraFilterStyle, UneraFilterOverlay } from './filters';
 import { VerifiedBadge } from './VerifiedBadge';
+import { CommentActionModal, useCommentLongPress } from './CommentActionModal';
 
 // ==================== SHARED BUTTON CLASSES ====================
 const reelGlassButton =
@@ -1061,39 +1062,101 @@ const ReelCommentsSheet: React.FC<{
     }
   };
 
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage((curr) => (curr === msg ? null : curr));
+    }, 2500);
+  };
+
+  const isCommentHidden = (comment: any): boolean => {
+    return Boolean(
+      comment?.is_hidden ||
+      comment?.hidden ||
+      comment?.hidden_scope ||
+      comment?.hidden_by
+    );
+  };
+
   const isOwnerComment = (comment: any) => {
-    const commentUserId = Number(comment.userId ?? comment.user_id);
-    return commentUserId === Number(currentUser?.id);
+    const commentUserId = Number(comment?.userId ?? comment?.user_id ?? comment?.user?.id ?? 0);
+    return commentUserId > 0 && commentUserId === Number(currentUser?.id);
   };
 
-  const beginLongPress = (comment: any) => {
-    if (!isOwnerComment(comment)) return;
-    clearTimeout(longPressTimerRef.current);
-    longPressTimerRef.current = setTimeout(() => {
-      setMenuComment(comment);
-    }, 450);
+  const isPlatformAdmin = (): boolean => {
+    const role = String((currentUser as any)?.role || '').toLowerCase();
+    return ['admin', 'superadmin', 'moderator', 'owner'].includes(role);
   };
 
-  const cancelLongPress = () => {
-    clearTimeout(longPressTimerRef.current);
+  const canHideComment = (comment: any): boolean => {
+    return isOwnerComment(comment) || isPlatformAdmin();
+  };
+
+  const canDeleteComment = (comment: any): boolean => {
+    return isOwnerComment(comment) || isPlatformAdmin();
+  };
+
+  const { getHandlers: getCommentPressHandlers } = useCommentLongPress((comment: any) => {
+    setMenuComment(comment);
+  });
+
+  const handleToggleHide = async (comment: any) => {
+    if (!currentUser || !comment) return;
+    const commentId = comment.id;
+    const currentlyHidden = isCommentHidden(comment);
+    const nextAction: 'hide' | 'unhide' = currentlyHidden ? 'unhide' : 'hide';
+
+    setComments((prev) =>
+      prev.map((c) =>
+        c.id === commentId
+          ? { ...c, is_hidden: !currentlyHidden, hidden_by: !currentlyHidden ? currentUser.id : null }
+          : c
+      )
+    );
+
+    showToast(nextAction === 'hide' ? 'Discussion hidden' : 'Discussion unhidden');
+
+    try {
+      await apiFetch(`/api/post-comments/${commentId}/hide`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: currentUser.id,
+          action: nextAction,
+        }),
+      });
+    } catch (e) {
+      console.error(`Failed to ${nextAction} reel comment:`, e);
+      showToast(`Failed to ${nextAction} discussion`);
+    }
+  };
+
+  const handleDeleteComment = async (comment: any) => {
+    if (!currentUser || !comment) return;
+    const commentId = comment.id;
+
+    setComments((prev) => prev.filter((c) => c.id !== commentId && c.parentId !== commentId && c.parent_id !== commentId));
+    showToast('Discussion deleted');
+
+    try {
+      if (onDeleteComment) {
+        await Promise.resolve(onDeleteComment(commentId));
+      }
+      await apiFetch(`/api/post-comments/${commentId}/delete?user_id=${currentUser.id}`, {
+        method: 'DELETE',
+      });
+    } catch (e: any) {
+      console.error('Failed to delete comment:', e);
+      showToast('Failed to delete discussion');
+    }
   };
 
   const openEditComment = (comment: any) => {
     setMenuComment(null);
     setEditingComment(comment);
     setEditingText(comment.text || '');
-  };
-
-  const confirmDeleteComment = async (comment: any) => {
-    setMenuComment(null);
-    const ok = window.confirm('Delete this discussion?');
-    if (!ok) return;
-
-    try {
-      await Promise.resolve(onDeleteComment(comment.id));
-    } catch (e: any) {
-      alert(e?.message || 'Failed to delete discussion');
-    }
   };
 
   const saveEditedComment = async () => {
@@ -1213,47 +1276,75 @@ const ReelCommentsSheet: React.FC<{
                 const isReply = c.parentId || c.parent_comment_id || c.parent_id;
                 const isOwner = isOwnerComment(c);
                 const reactionEmoji = commentReactions[c.id];
+                const isHidden = isCommentHidden(c);
+                const pressHandlers = getCommentPressHandlers(c);
 
                 return (
-                  <div key={c.id} className={isReply ? 'ml-9 pl-2 border-l border-white/10' : ''}>
+                  <div key={c.id} className={`group/reelcomment ${isReply ? 'ml-9 pl-2 border-l border-white/10' : ''}`}>
                     <div className="flex gap-3">
                       {/* Avatar */}
                       <img
                         src={author?.profile_image_url || author?.profileImage || 'https://ui-avatars.com/api/?name=User&background=1877F2&color=fff&bold=true'}
                         className="w-9 h-9 rounded-full object-cover shrink-0"
                         alt=""
+                        onClick={() => {
+                          const userId = Number(author?.id);
+                          if (userId) onProfileClick?.(userId);
+                        }}
                       />
 
                       {/* Comment Bubble */}
                       <div className="flex-1 min-w-0">
-                        <div className="inline-block max-w-[285px] bg-[#162137]/65 hover:bg-[#1E293B]/70 rounded-[18px] px-3.5 py-2.5 border border-[#1E293B]/60 transition-colors">
-                          {/* Name */}
-                          <div className="flex items-center gap-2 mb-0.5">
-                            <span
-                              className="text-[#F8FAFC] font-bold text-[21px] leading-tight cursor-pointer hover:underline"
-                              onClick={() => {
-                                const userId = Number(author?.id);
-                                if (userId) onProfileClick(userId);
-                              }}
-                            >
-                              {author?.name || 'User'}
-                            </span>
-                            {isOwner && (
-                              <span className="text-[10px] bg-white/10 px-1.5 py-0.5 rounded-full text-white/50 font-bold">
-                                You
+                        <div
+                          {...pressHandlers}
+                          className={`inline-block max-w-[285px] rounded-[18px] px-3.5 py-2.5 border transition-all cursor-pointer select-none ${
+                            isHidden
+                              ? 'bg-[#162137]/35 hover:bg-[#1E293B]/45 border-amber-500/30 opacity-75'
+                              : 'bg-[#162137]/65 hover:bg-[#1E293B]/70 border-[#1E293B]/60'
+                          }`}
+                          title="Hold for discussion options"
+                        >
+                          {/* Name & Options Header */}
+                          <div className="flex items-center justify-between gap-2 mb-0.5">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className="text-[#F8FAFC] font-bold text-[21px] leading-tight cursor-pointer hover:underline"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const userId = Number(author?.id);
+                                  if (userId) onProfileClick?.(userId);
+                                }}
+                              >
+                                {author?.name || 'User'}
                               </span>
-                            )}
+                              {isOwner && (
+                                <span className="text-[10px] bg-white/10 px-1.5 py-0.5 rounded-full text-white/50 font-bold">
+                                  You
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {isHidden && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/30">
+                                  Hidden
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setMenuComment(c);
+                                }}
+                                className="opacity-0 group-hover/reelcomment:opacity-100 p-1 text-[#94A3B8] hover:text-[#F8FAFC] rounded-full hover:bg-[#1E293B] transition-opacity"
+                                title="Discussion options"
+                              >
+                                <i className="fas fa-ellipsis-h text-xs" />
+                              </button>
+                            </div>
                           </div>
 
                           {/* Comment Text */}
-                          <div
-                            onTouchStart={() => beginLongPress(c)}
-                            onTouchEnd={cancelLongPress}
-                            onTouchMove={cancelLongPress}
-                            onMouseDown={() => beginLongPress(c)}
-                            onMouseUp={cancelLongPress}
-                            onMouseLeave={cancelLongPress}
-                          >
+                          <div>
                             {c.text && (
                               <p className={`text-[#CBD5E1] ${isReply ? 'text-[19.5px]' : 'text-[20.5px]'} leading-[1.38] font-normal whitespace-pre-wrap break-words`}>
                                 {c.text}
@@ -1320,6 +1411,13 @@ const ReelCommentsSheet: React.FC<{
                           >
                             Reply
                           </button>
+
+                          {isHidden && (
+                            <span className="text-amber-400/90 font-medium text-[11px] inline-flex items-center gap-1">
+                              <i className="far fa-eye-slash text-[10px]" />
+                              <span>Hidden</span>
+                            </span>
+                          )}
                         </div>
 
                         {/* Replies Section */}
@@ -1495,87 +1593,37 @@ const ReelCommentsSheet: React.FC<{
         </div>
       </div>
 
-      {/* Context Menu for Comment Options */}
+      {/* Discussion Hold Action Modal */}
       {menuComment && (
-        <div
-          className="fixed inset-0 z-[100001] bg-black/60 backdrop-blur-sm"
-          onClick={() => setMenuComment(null)}
-        >
-          <div
-            className="absolute bottom-0 left-0 right-0 max-w-[450px] mx-auto bg-[#18191A] rounded-t-[22px] border-t border-white/10 p-4 animate-slide-up"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="w-10 h-1 bg-[#B0B3B8]/30 rounded-full mx-auto mb-4"></div>
+        <CommentActionModal
+          isOpen={Boolean(menuComment)}
+          onClose={() => setMenuComment(null)}
+          comment={menuComment}
+          authorName={
+            (users.find((u: any) => Number(u.id) === Number(menuComment.userId ?? menuComment.user_id)) || menuComment.user)?.name ||
+            'User'
+          }
+          authorAvatar={
+            (users.find((u: any) => Number(u.id) === Number(menuComment.userId ?? menuComment.user_id)) || menuComment.user)?.profile_image_url ||
+            `https://ui-avatars.com/api/?name=${encodeURIComponent('User')}&background=1877F2&color=fff`
+          }
+          commentText={String(menuComment.text || '')}
+          isHidden={isCommentHidden(menuComment)}
+          canHide={canHideComment(menuComment)}
+          canDelete={canDeleteComment(menuComment)}
+          onToggleHide={handleToggleHide}
+          onDelete={handleDeleteComment}
+          onReply={(c) => {
+            setReplyTo(c);
+            inputRef.current?.focus();
+          }}
+        />
+      )}
 
-            <button
-              onClick={() => {
-                setShowReactionPicker(menuComment.id);
-                setMenuComment(null);
-              }}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-[#E4E6EB] mb-2"
-            >
-              <div className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center">
-                <i className="fas fa-smile text-base"></i>
-              </div>
-              <div className="text-left">
-                <p className="font-bold text-sm">React</p>
-                <p className="text-white/40 text-xs">Add emoji reaction</p>
-              </div>
-            </button>
-
-            <button
-              onClick={() => {
-                setReplyTo(menuComment);
-                setMenuComment(null);
-              }}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-[#E4E6EB] mb-2"
-            >
-              <div className="w-9 h-9 rounded-full bg-[#1877F2]/15 flex items-center justify-center">
-                <i className="fas fa-reply text-[#1877F2] text-base"></i>
-              </div>
-              <div className="text-left">
-                <p className="font-bold text-sm">Reply</p>
-                <p className="text-white/40 text-xs">Respond to this discussion</p>
-              </div>
-            </button>
-
-            {isOwnerComment(menuComment) && (
-              <>
-                <button
-                  onClick={() => openEditComment(menuComment)}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-[#E4E6EB] mb-2"
-                >
-                  <div className="w-9 h-9 rounded-full bg-[#45BD62]/15 flex items-center justify-center">
-                    <i className="fas fa-pen text-[#45BD62] text-base"></i>
-                  </div>
-                  <div className="text-left">
-                    <p className="font-bold text-sm">Edit</p>
-                    <p className="text-white/40 text-xs">Change your message</p>
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => confirmDeleteComment(menuComment)}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400"
-                >
-                  <div className="w-9 h-9 rounded-full bg-red-500/15 flex items-center justify-center">
-                    <i className="fas fa-trash-alt text-base"></i>
-                  </div>
-                  <div className="text-left">
-                    <p className="font-bold text-sm">Delete</p>
-                    <p className="text-red-300/50 text-xs">Remove permanently</p>
-                  </div>
-                </button>
-              </>
-            )}
-
-            <button
-              onClick={() => setMenuComment(null)}
-              className="w-full mt-3 py-3 rounded-xl bg-white/5 border border-white/10 text-[#B0B3B8] font-bold text-sm"
-            >
-              Cancel
-            </button>
-          </div>
+      {/* Floating Action Feedback Toast */}
+      {toastMessage && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[100000] px-4 py-2 rounded-full bg-[#1E293B] border border-[#334155] text-white text-xs font-semibold shadow-2xl flex items-center gap-2 animate-in fade-in zoom-in-95 duration-150">
+          <span>{toastMessage}</span>
         </div>
       )}
 

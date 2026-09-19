@@ -6,9 +6,12 @@ import {
   getCachedComments,
   setCachedComments,
   addCachedComment,
+  updateCachedComment,
+  removeCachedComment,
   getCachedSongs,
   setCachedSongs,
 } from '../utils/dataCache';
+import { CommentActionModal, useCommentLongPress } from './CommentActionModal';
 
 /* =========================================================
    CONSTANTS & DEFAULTS
@@ -746,6 +749,132 @@ export const CommentsSheet: React.FC<{
     }
   };
 
+  // Hold / Hide / Delete Handlers for Song Discussions
+  const [actionModalComment, setActionModalComment] = useState<any | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage((curr) => (curr === msg ? null : curr));
+    }, 2500);
+  };
+
+  const { getHandlers: getCommentPressHandlers } = useCommentLongPress((comment: any) => {
+    setActionModalComment(comment);
+  });
+
+  const isCommentHidden = (comment: any): boolean => {
+    return Boolean(
+      comment?.is_hidden ||
+      comment?.hidden ||
+      comment?.hidden_scope ||
+      comment?.hidden_by
+    );
+  };
+
+  const isCommentAuthor = (comment: any): boolean => {
+    if (!currentUser) return false;
+    const authorId = Number(comment?.user_id ?? comment?.userId ?? comment?.user?.id ?? 0);
+    return authorId > 0 && authorId === Number(currentUser.id);
+  };
+
+  const isSongOwner = (): boolean => {
+    if (!currentUser || !track) return false;
+    const ownerId = Number(
+      (track as any).user_id ||
+      (track as any).userId ||
+      (track as any).artist_id ||
+      (track as any).owner_id ||
+      0
+    );
+    return ownerId > 0 && ownerId === Number(currentUser.id);
+  };
+
+  const isPlatformAdmin = (): boolean => {
+    const role = String((currentUser as any)?.role || '').toLowerCase();
+    return ['admin', 'superadmin', 'moderator', 'owner'].includes(role);
+  };
+
+  const canHideComment = (comment: any): boolean => {
+    return isCommentAuthor(comment) || isSongOwner() || isPlatformAdmin();
+  };
+
+  const canDeleteComment = (comment: any): boolean => {
+    return isCommentAuthor(comment) || isSongOwner() || isPlatformAdmin();
+  };
+
+  const handleToggleHide = async (comment: any) => {
+    if (!currentUser || !comment || !track?.id) return;
+    const commentId = comment.id;
+    const currentlyHidden = isCommentHidden(comment);
+    const nextAction: 'hide' | 'unhide' = currentlyHidden ? 'unhide' : 'hide';
+
+    // Optimistic UI & cache update
+    setComments((prev) =>
+      prev.map((c) =>
+        c.id === commentId
+          ? { ...c, is_hidden: !currentlyHidden, hidden_by: !currentlyHidden ? currentUser.id : null }
+          : c
+      )
+    );
+
+    updateCachedComment('song', track.id, commentId, (c: any) => ({
+      ...c,
+      is_hidden: !currentlyHidden,
+      hidden_by: !currentlyHidden ? currentUser.id : null,
+    }));
+
+    showToast(nextAction === 'hide' ? 'Discussion hidden' : 'Discussion unhidden');
+
+    try {
+      const endpoint = `/api/songs/${track.id}/comments`;
+      const res = await apiJson<any>(endpoint, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          action: nextAction,
+          user_id: currentUser.id,
+          comment_id: commentId,
+        }),
+      });
+
+      if (!res.success) {
+        throw new Error(res.error || `Failed to ${nextAction} comment`);
+      }
+    } catch (error) {
+      console.error(`Failed to ${nextAction} song comment:`, error);
+      showToast(`Failed to ${nextAction} discussion`);
+      fetchComments(true);
+    }
+  };
+
+  const handleDeleteComment = async (comment: any) => {
+    if (!currentUser || !comment || !track?.id) return;
+    const commentId = comment.id;
+
+    // Optimistic removal
+    setComments((prev) => prev.filter((c) => c.id !== commentId));
+    removeCachedComment('song', track.id, commentId);
+    showToast('Discussion deleted');
+
+    try {
+      const endpoint = `/api/songs/${track.id}/comments?comment_id=${commentId}&user_id=${currentUser.id}`;
+      const res = await apiJson<any>(endpoint, {
+        method: 'DELETE',
+      });
+
+      if (!res.success) {
+        throw new Error(res.error || 'Failed to delete comment');
+      }
+
+      onCommentAdded?.();
+    } catch (error) {
+      console.error('Failed to delete song comment:', error);
+      showToast('Failed to delete discussion');
+      fetchComments(true);
+    }
+  };
+
   const formatRelativeTime = (dateInput: any): string => {
     if (!dateInput) return 'Just now';
     const d = new Date(dateInput);
@@ -823,9 +952,11 @@ export const CommentsSheet: React.FC<{
                 const author = users.find((u) => u.id === comment.user_id) || comment.user;
                 const authorName = author?.name || author?.username || 'User';
                 const authorAvatar = author?.profile_image_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(authorName)}&background=1877F2&color=fff`;
+                const isHidden = isCommentHidden(comment);
+                const pressHandlers = getCommentPressHandlers(comment);
                 
                 return (
-                  <div key={comment.id} className="flex gap-3">
+                  <div key={comment.id} className="flex gap-3 group/songcomment">
                     <img
                       src={authorAvatar}
                       className="w-9 h-9 rounded-full object-cover cursor-pointer flex-shrink-0"
@@ -833,29 +964,74 @@ export const CommentsSheet: React.FC<{
                       onClick={() => author?.id && onProfileClick(author.id)}
                     />
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span
-                          className="text-[#E4E6EB] font-bold text-[18px] cursor-pointer hover:underline"
-                          onClick={() => author?.id && onProfileClick(author.id)}
-                        >
-                          {authorName}
-                        </span>
-                        <span className="text-[#B0B3B8] text-[14px]">
-                          • {formatRelativeTime(comment.created_at)}
-                        </span>
+                      <div
+                        {...pressHandlers}
+                        className={`p-3 rounded-2xl border transition-all cursor-pointer select-none ${
+                          isHidden
+                            ? 'bg-[#162137]/35 hover:bg-[#1E293B]/45 border-amber-500/30 opacity-75'
+                            : 'bg-[#162137]/65 hover:bg-[#1E293B]/70 border-[#1E293B]/60'
+                        }`}
+                        title="Hold for discussion options"
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="text-[#E4E6EB] font-bold text-[18px] cursor-pointer hover:underline"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (author?.id) onProfileClick(author.id);
+                              }}
+                            >
+                              {authorName}
+                            </span>
+                            <span className="text-[#B0B3B8] text-[13px]">
+                              • {formatRelativeTime(comment.created_at)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {isHidden && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/30">
+                                Hidden
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActionModalComment(comment);
+                              }}
+                              className="opacity-0 group-hover/songcomment:opacity-100 p-1 text-[#94A3B8] hover:text-[#F8FAFC] rounded-full hover:bg-[#1E293B] transition-opacity"
+                              title="Discussion options"
+                            >
+                              <i className="fas fa-ellipsis-h text-xs" />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="text-[#E4E6EB] text-[18px] font-normal whitespace-pre-wrap break-words">
+                          {comment.text}
+                        </div>
                       </div>
-                      <div className="text-[#E4E6EB] text-[19px] font-bold whitespace-pre-wrap break-words mb-2">
-                        {comment.text}
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <button className="text-[15px] text-[#B0B3B8] hover:text-[#E4E6EB]">
+                      <div className="flex items-center gap-4 mt-1.5 ml-2">
+                        <button className="text-[14px] text-[#B0B3B8] hover:text-[#E4E6EB]">
                           Like
                         </button>
-                        <button className="text-[15px] text-[#B0B3B8] hover:text-[#E4E6EB]">
+                        <button
+                          className="text-[14px] text-[#B0B3B8] hover:text-[#E4E6EB]"
+                          onClick={() => {
+                            setText(`@${authorName} `);
+                            inputRef.current?.focus();
+                          }}
+                        >
                           Reply
                         </button>
+                        {isHidden && (
+                          <span className="text-amber-400/90 font-medium text-[11px] inline-flex items-center gap-1">
+                            <i className="far fa-eye-slash text-[10px]" />
+                            <span>Hidden</span>
+                          </span>
+                        )}
                         {comment.likes_count > 0 && (
-                          <span className="text-[15px] text-[#B0B3B8]">
+                          <span className="text-[14px] text-[#B0B3B8]">
                             {formatCompactNumber(comment.likes_count)} like{comment.likes_count !== 1 ? 's' : ''}
                           </span>
                         )}
@@ -894,6 +1070,41 @@ export const CommentsSheet: React.FC<{
           )}
         </div>
       </div>
+
+      {/* Discussion Hold Action Modal */}
+      {actionModalComment && (
+        <CommentActionModal
+          isOpen={Boolean(actionModalComment)}
+          onClose={() => setActionModalComment(null)}
+          comment={actionModalComment}
+          authorName={
+            (users.find((u) => u.id === actionModalComment.user_id) || actionModalComment.user)?.name ||
+            'User'
+          }
+          authorAvatar={
+            (users.find((u) => u.id === actionModalComment.user_id) || actionModalComment.user)?.profile_image_url ||
+            `https://ui-avatars.com/api/?name=${encodeURIComponent('User')}&background=1877F2&color=fff`
+          }
+          commentText={String(actionModalComment.text || '')}
+          isHidden={isCommentHidden(actionModalComment)}
+          canHide={canHideComment(actionModalComment)}
+          canDelete={canDeleteComment(actionModalComment)}
+          onToggleHide={handleToggleHide}
+          onDelete={handleDeleteComment}
+          onReply={(c) => {
+            const aName = (users.find((u) => u.id === c.user_id) || c.user)?.name || 'User';
+            setText(`@${aName} `);
+            inputRef.current?.focus();
+          }}
+        />
+      )}
+
+      {/* Floating Action Feedback Toast */}
+      {toastMessage && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[100000] px-4 py-2 rounded-full bg-[#1E293B] border border-[#334155] text-white text-xs font-semibold shadow-2xl flex items-center gap-2 animate-in fade-in zoom-in-95 duration-150">
+          <span>{toastMessage}</span>
+        </div>
+      )}
     </div>
   );
 };
